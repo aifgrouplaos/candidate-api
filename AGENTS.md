@@ -1,5 +1,9 @@
 ## Agent skills
 
+### Branching
+
+For implementation work, create a `codex/<short-task-name>` feature branch from the current base branch and commit changes there. Keep `main` free of direct implementation commits.
+
 ### Issue tracker
 
 Track issues and specs in GitHub Issues. Read `docs/agents/issue-tracker.md`
