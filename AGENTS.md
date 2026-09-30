@@ -2,7 +2,7 @@
 
 ### Branching
 
-For implementation work, create a `codex/<short-task-name>` feature branch from the current base branch and commit changes there. Keep `main` free of direct implementation commits.
+For implementation work, create a `<short-task-name>` feature branch from the current base branch and commit changes there. Keep `main` free of direct implementation commits.
 
 ### Issue tracker
 
