@@ -13,6 +13,7 @@ import (
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/logger"
 	"github.com/BounkhongDev/bkgo/middleware"
+	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -48,8 +49,7 @@ func main() {
 		defer gormDB.Close()
 		db = gormDB
 
-		// TODO: register domain models for auto-migration, e.g. &user.User{}
-		if err := gormDB.Raw().AutoMigrate(); err != nil {
+		if err := gormDB.Raw().AutoMigrate(&auth.User{}, &auth.RefreshToken{}); err != nil {
 			slog.Error("automigrate failed", "error", err)
 			os.Exit(1)
 		}
@@ -84,9 +84,12 @@ func main() {
 	})
 
 	api := app.Group("/api/v1")
-	if token != nil {
-		api.Use(middleware.JWT(token))
+	authMiddleware := auth.Authentication(token)
+	if db != nil && token != nil {
+		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(auth.NewAuthRepository(db), token))
+		authHandler.RegisterRoutes(api, authMiddleware)
 	}
+	api = api.Group("", authMiddleware)
 
 	// TODO: register module routes (repositories need DB_ENABLED=true)
 	// userHandler := user.NewUserHandler(user.NewUserUsecase(user.NewUserRepository(db)))
