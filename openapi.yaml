@@ -1,0 +1,901 @@
+openapi: 3.1.0
+info:
+  title: Candidate Take-Home API
+  version: 1.0.0
+  description: >-
+    REST contract for assessment exercises A1, A2, and A3. WebSocket events are
+    specified in API_SPEC.md. Tenant identity always comes from authentication.
+servers:
+  - url: https://{host}/api/v1
+    variables:
+      host:
+        default: api.example.test
+security:
+  - bearerAuth: []
+tags:
+  - name: Authentication
+  - name: Employees
+  - name: Projects
+  - name: Chat
+paths:
+  /auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      security: []
+      summary: Sign in with an Admin or Employee account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Authenticated
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [accessToken, refreshToken, tokenType, expiresIn, user]
+                    properties:
+                      accessToken: { type: string }
+                      refreshToken: { type: string }
+                      tokenType: { const: Bearer }
+                      expiresIn: { type: integer, const: 1800 }
+                      user: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      operationId: refreshSession
+      security: []
+      summary: Rotate a refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200':
+          description: New token pair; the submitted refresh token is revoked
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [accessToken, refreshToken, tokenType, expiresIn]
+                    properties:
+                      accessToken: { type: string }
+                      refreshToken: { type: string }
+                      tokenType: { const: Bearer }
+                      expiresIn: { type: integer, const: 1800 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Revoke a refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/EmptySuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /employees:
+    get:
+      tags: [Employees]
+      operationId: listEmployees
+      summary: List Employees in the Admin's tenant
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Search fullName, email, or employeeCode.
+        - name: departmentId
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string, description: Comma-separated Employee statuses. }
+        - name: sortBy
+          in: query
+          schema: { type: string, enum: [fullName, hireDate, createdAt] }
+        - name: sortOrder
+          in: query
+          schema: { type: string, enum: [asc, desc], default: asc }
+      responses:
+        '200':
+          description: Paginated tenant Employees
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmployeePage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Employees]
+      operationId: createEmployee
+      summary: Create an Employee login account and its conversation
+      description: Admin only. The role is always employee and tenant comes from authentication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateEmployee' }
+      responses:
+        '201':
+          description: Employee created
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Employee' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /employees/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Employees]
+      operationId: getEmployee
+      summary: Get an Employee in the authenticated tenant
+      description: An Employee may read only their own profile.
+      responses:
+        '200':
+          description: Employee
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Employee' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Employees]
+      operationId: updateEmployee
+      summary: Update an Employee with optimistic concurrency
+      description: Employees may update only fullName, phone, and avatarUrl. The current version is required.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: integer, minimum: 1 }
+                fullName: { type: string, minLength: 2, maxLength: 100 }
+                email: { type: string, format: email }
+                phone: { type: string }
+                departmentId: { type: string }
+                position: { type: string }
+                status: { $ref: '#/components/schemas/EmployeeStatus' }
+                hireDate: { type: string, format: date }
+                avatarUrl: { type: [string, 'null'], format: uri }
+      responses:
+        '200':
+          description: Updated Employee
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Employee' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Employees]
+      operationId: deactivateEmployee
+      summary: Disable an Employee login while retaining history
+      description: Admin only. This is a soft delete.
+      responses:
+        '200': { $ref: '#/components/responses/EmptySuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /employees/{id}/avatar:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    post:
+      tags: [Employees]
+      operationId: uploadEmployeeAvatar
+      summary: Upload an Employee avatar to private object storage
+      description: Maximum 2 MB; JPG, PNG, or WebP. The API checks tenant authorization and validates the file.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: Updated Employee with a short-lived authorized avatarUrl
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Employee' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /departments:
+    get:
+      tags: [Employees]
+      operationId: listDepartments
+      summary: List shared Department lookup values
+      responses:
+        '200':
+          description: Departments
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Department' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: List tenant Projects
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - name: search
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: Paginated tenant Projects
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a Project with nested Phases and Tasks atomically
+      description: Admin only. Repeat the same Idempotency-Key and body to receive the original result.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProject' }
+      responses:
+        '201':
+          description: Project and all nested resources created
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /projects/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Projects]
+      operationId: getProject
+      summary: Get a tenant Project and its complete hierarchy
+      responses:
+        '200':
+          description: Project
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Projects]
+      operationId: deleteProject
+      summary: Delete a tenant Project
+      description: Admin only; used for assessment cleanup.
+      responses:
+        '200': { $ref: '#/components/responses/EmptySuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /lookups/task-types:
+    get:
+      tags: [Projects]
+      operationId: listTaskTypes
+      summary: List Task type choices
+      responses:
+        '200':
+          description: Task types
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: string
+                      enum: [feature, bug]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /lookups/priorities:
+    get:
+      tags: [Projects]
+      operationId: listPriorities
+      summary: List Task priority choices
+      responses:
+        '200':
+          description: Priorities
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: string
+                      enum: [low, medium, high, critical]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /chat/conversations:
+    get:
+      tags: [Chat]
+      operationId: listConversations
+      summary: List conversations visible to the caller
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/Limit' }
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: unreadOnly
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Paginated conversations
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConversationPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Chat]
+      operationId: ensureConversation
+      summary: Return the Employee's existing conversation
+      description: Employee only; idempotent because the conversation is created with the Employee.
+      responses:
+        '200':
+          description: Existing conversation
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Conversation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /chat/conversations/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Chat]
+      operationId: getConversation
+      summary: Get an authorized conversation
+      responses:
+        '200':
+          description: Conversation
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Conversation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /chat/conversations/{id}/messages:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [Chat]
+      operationId: listMessages
+      summary: Read messages in ascending conversation order
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
+        - name: before
+          in: query
+          schema: { type: string }
+          description: Exclusive message ID cursor for older messages.
+        - name: after
+          in: query
+          schema: { type: string }
+          description: Exclusive message ID cursor for reconnect synchronization.
+      responses:
+        '200':
+          description: Messages and cursor metadata
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessagePage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Chat]
+      operationId: sendMessage
+      summary: Persist a message and broadcast it to participant sessions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [clientMessageId, text]
+              properties:
+                clientMessageId: { type: string, format: uuid }
+                text: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        '201':
+          description: Saved message
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Message' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /chat/conversations/{id}/read:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    post:
+      tags: [Chat]
+      operationId: markConversationRead
+      summary: Advance the caller's shared read position
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lastReadMessageId]
+              properties:
+                lastReadMessageId: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/EmptySuccess' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /chat/unread-count:
+    get:
+      tags: [Chat]
+      operationId: getUnreadCount
+      summary: Get the caller's aggregate unread message count
+      responses:
+        '200':
+          description: Aggregate unread count
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [total]
+                    properties:
+                      total: { type: integer, minimum: 0 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /chat/ws-ticket:
+    post:
+      tags: [Chat]
+      operationId: createWebSocketTicket
+      summary: Create a single-use WebSocket connection ticket
+      responses:
+        '200':
+          description: Ticket valid for 30 to 60 seconds
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [ticket, expiresIn]
+                    properties:
+                      ticket: { type: string }
+                      expiresIn: { type: integer, minimum: 30, maximum: 60 }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  headers:
+    RequestId:
+      description: Request correlation ID.
+      schema: { type: string }
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+  responses:
+    EmptySuccess:
+      description: Successful operation with no result body beyond the envelope.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { type: 'null' }
+    Unauthorized:
+      description: Missing, invalid, expired, revoked, or reused credentials.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Caller lacks the required role or tenant ownership.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource does not exist in the caller's authorized scope.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Conflict:
+      description: Duplicate, stale version, or idempotency key payload conflict.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ValidationError:
+      description: All discovered field validation errors.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+  schemas:
+    User:
+      type: object
+      required: [id, email, role]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, employee] }
+    EmployeeStatus:
+      type: string
+      enum: [active, inactive, on_leave]
+    Department:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: string }
+        name: { type: string }
+    Employee:
+      type: object
+      required: [id, fullName, email, status, version, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        employeeCode: { type: string }
+        fullName: { type: string, minLength: 2, maxLength: 100 }
+        email: { type: string, format: email }
+        phone: { type: [string, 'null'] }
+        department: { oneOf: [{ $ref: '#/components/schemas/Department' }, { type: 'null' }] }
+        position: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/EmployeeStatus' }
+        hireDate: { type: [string, 'null'], format: date }
+        avatarUrl: { type: [string, 'null'], format: uri, description: Short-lived authorized presigned URL. }
+        version: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateEmployee:
+      type: object
+      required: [fullName, email, password]
+      properties:
+        fullName: { type: string, minLength: 2, maxLength: 100 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, writeOnly: true }
+        phone: { type: [string, 'null'] }
+        departmentId: { type: [string, 'null'] }
+        position: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/EmployeeStatus' }
+        hireDate: { type: [string, 'null'], format: date }
+    PageMeta:
+      type: object
+      required: [page, limit, total, totalPages]
+      properties:
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+        totalPages: { type: integer }
+    EmployeePage:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Employee' } }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+    Task:
+      type: object
+      required: [id, title, type, priority, assigneeId, estimateHours, dueDate, severity]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        type: { type: string, enum: [feature, bug] }
+        priority: { type: string, enum: [low, medium, high, critical] }
+        assigneeId: { type: string }
+        estimateHours: { type: number, exclusiveMinimum: 0, maximum: 999 }
+        dueDate: { type: string, format: date }
+        severity: { type: [string, 'null'], enum: [minor, major, critical, null] }
+    CreateTask:
+      type: object
+      required: [title, type, priority, assigneeId, estimateHours, dueDate, severity]
+      properties:
+        title: { type: string }
+        type: { type: string, enum: [feature, bug] }
+        priority: { type: string, enum: [low, medium, high, critical] }
+        assigneeId: { type: string }
+        estimateHours: { type: number, exclusiveMinimum: 0, maximum: 999 }
+        dueDate: { type: string, format: date }
+        severity: { type: [string, 'null'], enum: [minor, major, critical, null] }
+    Phase:
+      type: object
+      required: [id, name, order, startDate, endDate, tasks]
+      properties:
+        id: { type: string, readOnly: true }
+        name: { type: string }
+        order: { type: integer, minimum: 1 }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        tasks: { type: array, minItems: 1, maxItems: 100, items: { $ref: '#/components/schemas/Task' } }
+    CreatePhase:
+      type: object
+      required: [name, order, startDate, endDate, tasks]
+      properties:
+        name: { type: string }
+        order: { type: integer, minimum: 1 }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        tasks: { type: array, minItems: 1, maxItems: 100, items: { $ref: '#/components/schemas/CreateTask' } }
+    Project:
+      type: object
+      required: [id, name, code, ownerId, startDate, endDate, phases, version, createdAt, updatedAt]
+      properties:
+        id: { type: string, readOnly: true }
+        name: { type: string, minLength: 3, maxLength: 100 }
+        code: { type: string }
+        description: { type: [string, 'null'] }
+        ownerId: { type: string }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        phases: { type: array, minItems: 1, maxItems: 20, items: { $ref: '#/components/schemas/Phase' } }
+        version: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    CreateProject:
+      type: object
+      required: [name, code, ownerId, startDate, endDate, phases]
+      properties:
+        name: { type: string, minLength: 3, maxLength: 100 }
+        code: { type: string }
+        description: { type: [string, 'null'] }
+        ownerId: { type: string }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        phases: { type: array, minItems: 1, maxItems: 20, items: { $ref: '#/components/schemas/CreatePhase' } }
+    ProjectPage:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Project' } }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+    Conversation:
+      type: object
+      required: [id, employee, unreadCount, updatedAt]
+      properties:
+        id: { type: string }
+        employee:
+          type: object
+          required: [id, fullName]
+          properties:
+            id: { type: string }
+            fullName: { type: string }
+            avatarUrl: { type: [string, 'null'], format: uri }
+        lastMessage: { oneOf: [{ $ref: '#/components/schemas/MessagePreview' }, { type: 'null' }] }
+        unreadCount: { type: integer, minimum: 0 }
+        updatedAt: { type: string, format: date-time }
+    MessagePreview:
+      type: object
+      required: [id, text, senderRole, createdAt]
+      properties:
+        id: { type: string }
+        text: { type: string }
+        senderRole: { type: string, enum: [admin, employee] }
+        createdAt: { type: string, format: date-time }
+    Message:
+      type: object
+      required: [id, clientMessageId, conversationId, sequence, sender, text, status, createdAt]
+      properties:
+        id: { type: string }
+        clientMessageId: { type: string, format: uuid }
+        conversationId: { type: string }
+        sequence: { type: integer, minimum: 1 }
+        sender:
+          type: object
+          required: [id, fullName, role]
+          properties:
+            id: { type: string }
+            fullName: { type: string }
+            role: { type: string, enum: [admin, employee] }
+        text: { type: string, minLength: 1, maxLength: 2000 }
+        status: { type: string, enum: [sent, delivered, read] }
+        createdAt: { type: string, format: date-time }
+        readAt: { type: [string, 'null'], format: date-time }
+    ConversationPage:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Conversation' } }
+        meta: { $ref: '#/components/schemas/PageMeta' }
+    MessagePage:
+      type: object
+      required: [data, meta]
+      properties:
+        data: { type: array, items: { $ref: '#/components/schemas/Message' } }
+        meta:
+          type: object
+          required: [hasMoreBefore, hasMoreAfter]
+          properties:
+            hasMoreBefore: { type: boolean }
+            hasMoreAfter: { type: boolean }
+            nextBefore: { type: [string, 'null'] }
+    ErrorResponse:
+      type: object
+      required: [error, requestId]
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          properties:
+            code:
+              type: string
+              enum: [BAD_REQUEST, UNAUTHORIZED, TOKEN_EXPIRED, FORBIDDEN, NOT_FOUND, CONFLICT, VERSION_CONFLICT, IDEMPOTENCY_CONFLICT, VALIDATION_ERROR, RATE_LIMITED, INTERNAL_ERROR]
+            message: { type: string }
+            details:
+              type: array
+              items:
+                type: object
+                required: [field, message]
+                properties:
+                  field: { type: string }
+                  message: { type: string }
+        requestId: { type: string }
