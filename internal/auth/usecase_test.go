@@ -14,8 +14,9 @@ import (
 )
 
 type memoryAuthRepository struct {
-	user   *User
-	tokens map[string]*RefreshToken
+	user     *User
+	tokens   map[string]*RefreshToken
+	sessions map[string]*AuthSession
 }
 
 func (r *memoryAuthRepository) FindActiveUserByEmail(_ context.Context, email string) (*User, error) {
@@ -25,23 +26,37 @@ func (r *memoryAuthRepository) FindActiveUserByEmail(_ context.Context, email st
 	return r.user, nil
 }
 
-func (r *memoryAuthRepository) FindUserByRefreshToken(_ context.Context, hash string, now time.Time) (*User, error) {
+func (r *memoryAuthRepository) FindUserByRefreshToken(_ context.Context, hash string, now time.Time) (*User, *RefreshToken, error) {
 	token := r.tokens[hash]
-	if token == nil || token.RevokedAt != nil || !token.ExpiresAt.After(now) || r.user == nil || !r.user.Active {
-		return nil, errs.ErrUnauthorized
+	var session *AuthSession
+	if token != nil {
+		session = r.sessions[token.SessionID]
 	}
-	return r.user, nil
+	if token == nil || token.RevokedAt != nil || !token.ExpiresAt.After(now) || session == nil || session.RevokedAt != nil || r.user == nil || !r.user.Active {
+		return nil, nil, errs.ErrUnauthorized
+	}
+	return r.user, token, nil
 }
 
-func (r *memoryAuthRepository) SaveRefreshToken(_ context.Context, token *RefreshToken) error {
-	token.UserID = r.user.ID
+func (r *memoryAuthRepository) CreateSession(_ context.Context, session *AuthSession, token *RefreshToken) error {
+	r.sessions[session.ID] = session
+	token.UserID, token.SessionID = session.UserID, session.ID
 	r.tokens[token.TokenHash] = token
 	return nil
 }
 
+func (r *memoryAuthRepository) SessionActive(_ context.Context, sessionID, userID, tenantID string) (bool, error) {
+	session := r.sessions[sessionID]
+	return session != nil && session.RevokedAt == nil && session.UserID == userID && session.TenantID == tenantID && r.user != nil && r.user.Active, nil
+}
+
 func (r *memoryAuthRepository) RotateRefreshToken(_ context.Context, oldHash string, expectedUser *User, replacement *RefreshToken, now time.Time) error {
 	old := r.tokens[oldHash]
-	if old == nil || old.RevokedAt != nil || !old.ExpiresAt.After(now) || r.user == nil || !r.user.Active {
+	var session *AuthSession
+	if old != nil {
+		session = r.sessions[old.SessionID]
+	}
+	if old == nil || old.RevokedAt != nil || !old.ExpiresAt.After(now) || session == nil || session.RevokedAt != nil || r.user == nil || !r.user.Active {
 		return errs.ErrUnauthorized
 	}
 	if r.user.ID != expectedUser.ID || r.user.TenantID != expectedUser.TenantID || r.user.Role != expectedUser.Role {
@@ -53,12 +68,18 @@ func (r *memoryAuthRepository) RotateRefreshToken(_ context.Context, oldHash str
 	return nil
 }
 
-func (r *memoryAuthRepository) RevokeRefreshToken(_ context.Context, hash, userID string, now time.Time) error {
+func (r *memoryAuthRepository) RevokeSession(_ context.Context, hash, userID, sessionID string, now time.Time) error {
 	token := r.tokens[hash]
-	if token == nil || token.UserID != userID || token.RevokedAt != nil || !token.ExpiresAt.After(now) {
+	session := r.sessions[sessionID]
+	if token == nil || token.UserID != userID || token.SessionID != sessionID || token.RevokedAt != nil || !token.ExpiresAt.After(now) || session == nil || session.RevokedAt != nil {
 		return errs.ErrUnauthorized
 	}
-	token.RevokedAt = &now
+	session.RevokedAt = &now
+	for _, current := range r.tokens {
+		if current.SessionID == sessionID && current.RevokedAt == nil {
+			current.RevokedAt = &now
+		}
+	}
 	return nil
 }
 
@@ -69,7 +90,7 @@ func TestLoginRotateAndLogout(t *testing.T) {
 	}
 	repo := &memoryAuthRepository{
 		user:   &User{ID: "user-1", TenantID: "tenant-1", Email: "admin@example.test", PasswordHash: string(hash), Role: RoleAdmin, Active: true},
-		tokens: make(map[string]*RefreshToken),
+		tokens: make(map[string]*RefreshToken), sessions: make(map[string]*AuthSession),
 	}
 	tokens := jwt.New(config.JWT{Secret: "test-secret"})
 	uc := NewAuthUsecase(repo, tokens)
@@ -110,7 +131,7 @@ func TestLoginRotateAndLogout(t *testing.T) {
 	if _, err := uc.Refresh(context.Background(), RefreshInput{RefreshToken: expiredRaw}); err == nil {
 		t.Fatal("expired refresh token was accepted")
 	}
-	if err := uc.Logout(context.Background(), "user-1", RefreshInput{RefreshToken: refreshed.RefreshToken}); err != nil {
+	if err := uc.Logout(context.Background(), "user-1", claims["sid"].(string), RefreshInput{RefreshToken: refreshed.RefreshToken}); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
 	if _, err := uc.Refresh(context.Background(), RefreshInput{RefreshToken: refreshed.RefreshToken}); err == nil {
@@ -125,7 +146,7 @@ func TestLoginRejectsUnknownUserAndWrongPasswordGenerically(t *testing.T) {
 	}
 	repo := &memoryAuthRepository{
 		user:   &User{ID: "user-1", TenantID: "tenant-1", Email: "admin@example.test", PasswordHash: string(hash), Role: RoleAdmin, Active: true},
-		tokens: make(map[string]*RefreshToken),
+		tokens: make(map[string]*RefreshToken), sessions: make(map[string]*AuthSession),
 	}
 	uc := NewAuthUsecase(repo, jwt.New(config.JWT{Secret: "test-secret"}))
 	for _, input := range []Credentials{
@@ -141,7 +162,7 @@ func TestLoginRejectsUnknownUserAndWrongPasswordGenerically(t *testing.T) {
 			t.Fatalf("credential failure message differs: %q", appErr.Message)
 		}
 	}
-	if err := uc.Logout(context.Background(), "other-user", RefreshInput{RefreshToken: "missing"}); !errors.Is(err, errs.ErrUnauthorized) {
+	if err := uc.Logout(context.Background(), "other-user", "", RefreshInput{RefreshToken: "missing"}); !errors.Is(err, errs.ErrUnauthorized) {
 		appErr, ok := errs.IsAppError(err)
 		if !ok || appErr.Code != "UNAUTHORIZED" {
 			t.Fatalf("logout with unknown token must be unauthorized, got %v", err)
@@ -156,11 +177,12 @@ func TestSigningFailureLeavesRefreshTokenUsable(t *testing.T) {
 	}
 	oldRaw := "current-refresh-token"
 	oldHash := hashToken(oldRaw)
+	session := &AuthSession{ID: "session-1", UserID: "user-1", TenantID: "tenant-1"}
 	repo := &memoryAuthRepository{
 		user: &User{ID: "user-1", TenantID: "tenant-1", Email: "admin@example.test", PasswordHash: string(passwordHash), Role: RoleAdmin, Active: true},
 		tokens: map[string]*RefreshToken{
-			oldHash: {UserID: "user-1", TokenHash: oldHash, ExpiresAt: time.Now().Add(time.Hour)},
-		},
+			oldHash: {UserID: "user-1", SessionID: session.ID, TokenHash: oldHash, ExpiresAt: time.Now().Add(time.Hour)},
+		}, sessions: map[string]*AuthSession{session.ID: session},
 	}
 	uc := NewAuthUsecase(repo, jwt.New(config.JWT{}))
 	if _, err := uc.Login(context.Background(), Credentials{Email: "admin@example.test", Password: "password-123"}); err == nil {

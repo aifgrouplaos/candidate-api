@@ -13,6 +13,7 @@ import (
 
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/errs"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -47,7 +48,7 @@ type Session struct {
 type AuthUsecase interface {
 	Login(ctx context.Context, input Credentials) (*Session, error)
 	Refresh(ctx context.Context, input RefreshInput) (*Session, error)
-	Logout(ctx context.Context, userID string, input RefreshInput) error
+	Logout(ctx context.Context, userID, sessionID string, input RefreshInput) error
 }
 
 type authUsecase struct {
@@ -88,7 +89,7 @@ func (u *authUsecase) Refresh(ctx context.Context, input RefreshInput) (*Session
 	}
 	oldHash := hashToken(input.RefreshToken)
 	now := time.Now().UTC()
-	user, err := u.repo.FindUserByRefreshToken(ctx, oldHash, now)
+	user, old, err := u.repo.FindUserByRefreshToken(ctx, oldHash, now)
 	if err != nil {
 		return nil, normalizeAuthError(err)
 	}
@@ -96,22 +97,22 @@ func (u *authUsecase) Refresh(ctx context.Context, input RefreshInput) (*Session
 	if err != nil {
 		return nil, errs.Internal("could not issue a session")
 	}
-	session, err := u.session(user, raw, false)
+	session, err := u.session(user, old.SessionID, raw, false)
 	if err != nil {
 		return nil, err
 	}
-	replacement := &RefreshToken{TokenHash: hashToken(raw), ExpiresAt: now.Add(refreshTokenTTL)}
+	replacement := &RefreshToken{SessionID: old.SessionID, TokenHash: hashToken(raw), ExpiresAt: now.Add(refreshTokenTTL)}
 	if err := u.repo.RotateRefreshToken(ctx, oldHash, user, replacement, now); err != nil {
 		return nil, normalizeAuthError(err)
 	}
 	return session, nil
 }
 
-func (u *authUsecase) Logout(ctx context.Context, userID string, input RefreshInput) error {
+func (u *authUsecase) Logout(ctx context.Context, userID, sessionID string, input RefreshInput) error {
 	if strings.TrimSpace(input.RefreshToken) == "" {
 		return validationError([]FieldError{{Field: "refreshToken", Message: "Refresh token is required."}})
 	}
-	if err := u.repo.RevokeRefreshToken(ctx, hashToken(input.RefreshToken), userID, time.Now().UTC()); err != nil {
+	if err := u.repo.RevokeSession(ctx, hashToken(input.RefreshToken), userID, sessionID, time.Now().UTC()); err != nil {
 		return normalizeAuthError(err)
 	}
 	return nil
@@ -122,24 +123,26 @@ func (u *authUsecase) newSession(ctx context.Context, user *User) (*Session, err
 	if err != nil {
 		return nil, errs.Internal("could not issue a session")
 	}
-	session, err := u.session(user, raw, true)
+	sessionID := uuid.NewString()
+	session, err := u.session(user, sessionID, raw, true)
 	if err != nil {
 		return nil, err
 	}
-	if err := u.repo.SaveRefreshToken(ctx, &RefreshToken{
-		UserID: user.ID, TokenHash: hashToken(raw), ExpiresAt: time.Now().UTC().Add(refreshTokenTTL),
-	}); err != nil {
+	if err := u.repo.CreateSession(ctx,
+		&AuthSession{ID: sessionID, UserID: user.ID, TenantID: user.TenantID},
+		&RefreshToken{UserID: user.ID, SessionID: sessionID, TokenHash: hashToken(raw), ExpiresAt: time.Now().UTC().Add(refreshTokenTTL)},
+	); err != nil {
 		return nil, errs.Internal("could not issue a session")
 	}
 	return session, nil
 }
 
-func (u *authUsecase) session(user *User, refreshToken string, includeUser bool) (*Session, error) {
+func (u *authUsecase) session(user *User, sessionID, refreshToken string, includeUser bool) (*Session, error) {
 	if user.Role != RoleAdmin && user.Role != RoleEmployee || user.ID == "" || user.TenantID == "" {
 		return nil, errs.Internal("account is not configured for authentication")
 	}
 	accessToken, err := u.token.Sign(contract.Claims{
-		"sub": user.ID, "tenantId": user.TenantID, "role": string(user.Role),
+		"sub": user.ID, "tenantId": user.TenantID, "role": string(user.Role), "sid": sessionID,
 	}, accessTokenTTL)
 	if err != nil {
 		return nil, errs.Internal("could not issue a session")

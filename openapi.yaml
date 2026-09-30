@@ -55,6 +55,7 @@ paths:
                       expiresIn: { type: integer, const: 1800 }
                       user: { $ref: '#/components/schemas/User' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         '422': { $ref: '#/components/responses/ValidationError' }
   /auth/refresh:
     post:
@@ -91,12 +92,14 @@ paths:
                       tokenType: { const: Bearer }
                       expiresIn: { type: integer, const: 1800 }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         '422': { $ref: '#/components/responses/ValidationError' }
   /auth/logout:
     post:
       tags: [Authentication]
       operationId: logout
-      summary: Revoke a refresh token
+      summary: Revoke the authenticated session
+      description: Revokes the session associated with the submitted refresh token. Its access token and refresh tokens stop working immediately.
       requestBody:
         required: true
         content:
@@ -109,6 +112,7 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/EmptySuccess' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
         '422': { $ref: '#/components/responses/ValidationError' }
   /employees:
     get:
@@ -681,6 +685,15 @@ components:
       description: All discovered field validation errors.
       headers:
         X-Request-Id: { $ref: '#/components/headers/RequestId' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    RateLimited:
+      description: Request rate limit exceeded.
+      headers:
+        X-Request-Id: { $ref: '#/components/headers/RequestId' }
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorResponse' }

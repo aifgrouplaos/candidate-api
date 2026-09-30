@@ -18,3 +18,7 @@ when assigning triage state.
 
 Use a single-context layout. Read `docs/agents/domain.md`
 before exploring the codebase.
+
+### API security
+
+For every API change, follow the OWASP security baseline and authentication rules in `API_SPEC.md` sections 2–3. Review authorization, input bounds, rate limits, secrets, and failure behavior before merging.

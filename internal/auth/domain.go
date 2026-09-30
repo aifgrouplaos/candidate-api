@@ -29,6 +29,7 @@ func (User) TableName() string { return "users" }
 type RefreshToken struct {
 	ID        string     `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
 	UserID    string     `json:"userId" gorm:"type:uuid;not null;index"`
+	SessionID string     `json:"sessionId" gorm:"type:uuid;not null;index;default:gen_random_uuid()"`
 	TokenHash string     `json:"-" gorm:"not null;uniqueIndex"`
 	ExpiresAt time.Time  `json:"expiresAt" gorm:"not null;index"`
 	RevokedAt *time.Time `json:"revokedAt"`
@@ -37,10 +38,25 @@ type RefreshToken struct {
 
 func (RefreshToken) TableName() string { return "refresh_tokens" }
 
+type AuthSession struct {
+	ID        string     `json:"id" gorm:"primaryKey;type:uuid"`
+	UserID    string     `json:"userId" gorm:"type:uuid;not null;index"`
+	TenantID  string     `json:"tenantId" gorm:"type:uuid;not null;index"`
+	RevokedAt *time.Time `json:"revokedAt"`
+	CreatedAt time.Time  `json:"createdAt" gorm:"autoCreateTime"`
+}
+
+func (AuthSession) TableName() string { return "auth_sessions" }
+
+type SessionValidator interface {
+	SessionActive(ctx context.Context, sessionID, userID, tenantID string) (bool, error)
+}
+
 type AuthRepository interface {
+	SessionValidator
 	FindActiveUserByEmail(ctx context.Context, email string) (*User, error)
-	FindUserByRefreshToken(ctx context.Context, hash string, now time.Time) (*User, error)
-	SaveRefreshToken(ctx context.Context, token *RefreshToken) error
+	FindUserByRefreshToken(ctx context.Context, hash string, now time.Time) (*User, *RefreshToken, error)
+	CreateSession(ctx context.Context, session *AuthSession, token *RefreshToken) error
 	RotateRefreshToken(ctx context.Context, oldHash string, expectedUser *User, replacement *RefreshToken, now time.Time) error
-	RevokeRefreshToken(ctx context.Context, hash, userID string, now time.Time) error
+	RevokeSession(ctx context.Context, hash, userID, sessionID string, now time.Time) error
 }

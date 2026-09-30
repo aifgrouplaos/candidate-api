@@ -14,10 +14,10 @@ type AuthHandler struct{ usecase AuthUsecase }
 
 func NewAuthHandler(usecase AuthUsecase) *AuthHandler { return &AuthHandler{usecase: usecase} }
 
-func (h *AuthHandler) RegisterRoutes(r fiber.Router, authenticated fiber.Handler) {
-	r.Post("/auth/login", h.Login)
-	r.Post("/auth/refresh", h.Refresh)
-	r.Post("/auth/logout", authenticated, h.Logout)
+func (h *AuthHandler) RegisterRoutes(public, protected fiber.Router, loginLimit, refreshLimit fiber.Handler) {
+	public.Post("/auth/login", loginLimit, h.Login)
+	public.Post("/auth/refresh", refreshLimit, h.Refresh)
+	protected.Post("/auth/logout", h.Logout)
 }
 
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
@@ -53,16 +53,17 @@ func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 	if !ok {
 		return writeError(c, errs.ErrUnauthorized)
 	}
-	if err := h.usecase.Logout(c.UserContext(), principal.UserID, input); err != nil {
+	if err := h.usecase.Logout(c.UserContext(), principal.UserID, principal.SessionID, input); err != nil {
 		return writeError(c, err)
 	}
 	return writeSuccess(c, nil)
 }
 
 type Principal struct {
-	UserID   string
-	TenantID string
-	Role     Role
+	UserID    string
+	TenantID  string
+	SessionID string
+	Role      Role
 }
 
 const principalKey = "authPrincipal"
@@ -73,9 +74,9 @@ func PrincipalFrom(c *fiber.Ctx) (Principal, bool) {
 }
 
 // Authentication verifies token expiry and requires the identity, tenant, and role claims.
-func Authentication(token contract.Token) fiber.Handler {
+func Authentication(token contract.Token, sessions SessionValidator) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		if token == nil {
+		if token == nil || sessions == nil {
 			return writeError(c, errs.ErrUnauthorized)
 		}
 		header := c.Get(fiber.HeaderAuthorization)
@@ -89,11 +90,19 @@ func Authentication(token contract.Token) fiber.Handler {
 		userID, userOK := claims["sub"].(string)
 		tenantID, tenantOK := claims["tenantId"].(string)
 		role, roleOK := claims["role"].(string)
-		if !userOK || userID == "" || !tenantOK || tenantID == "" || !roleOK ||
+		sessionID, sessionOK := claims["sid"].(string)
+		if !userOK || userID == "" || !tenantOK || tenantID == "" || !sessionOK || sessionID == "" || !roleOK ||
 			(role != string(RoleAdmin) && role != string(RoleEmployee)) {
 			return writeError(c, errs.ErrUnauthorized)
 		}
-		c.Locals(principalKey, Principal{UserID: userID, TenantID: tenantID, Role: Role(role)})
+		active, err := sessions.SessionActive(c.UserContext(), sessionID, userID, tenantID)
+		if err != nil {
+			return writeError(c, errs.Internal("could not verify authentication session"))
+		}
+		if !active {
+			return writeError(c, errs.ErrUnauthorized)
+		}
+		c.Locals(principalKey, Principal{UserID: userID, TenantID: tenantID, SessionID: sessionID, Role: Role(role)})
 		return c.Next()
 	}
 }

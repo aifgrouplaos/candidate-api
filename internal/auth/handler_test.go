@@ -22,12 +22,13 @@ func TestLoginEndpointContract(t *testing.T) {
 	}
 	repo := &memoryAuthRepository{
 		user:   &User{ID: "user-1", TenantID: "tenant-1", Email: "admin@example.test", PasswordHash: string(passwordHash), Role: RoleAdmin, Active: true},
-		tokens: make(map[string]*RefreshToken),
+		tokens: make(map[string]*RefreshToken), sessions: make(map[string]*AuthSession),
 	}
 	token := jwt.New(config.JWT{Secret: "test-secret"})
 	handler := NewAuthHandler(NewAuthUsecase(repo, token))
 	app := fiber.New()
-	handler.RegisterRoutes(app, Authentication(token))
+	pass := func(c *fiber.Ctx) error { return c.Next() }
+	handler.RegisterRoutes(app, app.Group("", Authentication(token, repo)), pass, pass)
 
 	request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"admin@example.test","password":"password-123"}`))
 	request.Header.Set("Content-Type", fiber.MIMEApplicationJSON)
@@ -86,7 +87,11 @@ func TestLoginEndpointContract(t *testing.T) {
 func TestAuthenticationRequiresValidIdentityTenantRoleAndExpiry(t *testing.T) {
 	token := jwt.New(config.JWT{Secret: "test-secret"})
 	app := fiber.New()
-	app.Get("/protected", Authentication(token), func(c *fiber.Ctx) error {
+	repo := &memoryAuthRepository{
+		user:     &User{ID: "user-1", TenantID: "tenant-1", Active: true},
+		sessions: map[string]*AuthSession{"session-1": {ID: "session-1", UserID: "user-1", TenantID: "tenant-1"}},
+	}
+	app.Get("/protected", Authentication(token, repo), func(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusOK)
 	})
 	cases := []struct {
@@ -95,7 +100,7 @@ func TestAuthenticationRequiresValidIdentityTenantRoleAndExpiry(t *testing.T) {
 		ttl    time.Duration
 		status int
 	}{
-		{name: "valid", claims: contract.Claims{"sub": "user-1", "tenantId": "tenant-1", "role": "admin"}, ttl: time.Hour, status: http.StatusOK},
+		{name: "valid", claims: contract.Claims{"sub": "user-1", "tenantId": "tenant-1", "role": "admin", "sid": "session-1"}, ttl: time.Hour, status: http.StatusOK},
 		{name: "missing tenant", claims: contract.Claims{"sub": "user-1", "role": "admin"}, ttl: time.Hour, status: http.StatusUnauthorized},
 		{name: "missing role", claims: contract.Claims{"sub": "user-1", "tenantId": "tenant-1"}, ttl: time.Hour, status: http.StatusUnauthorized},
 		{name: "invalid role", claims: contract.Claims{"sub": "user-1", "tenantId": "tenant-1", "role": "operator"}, ttl: time.Hour, status: http.StatusUnauthorized},

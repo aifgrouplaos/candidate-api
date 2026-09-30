@@ -23,14 +23,29 @@ Unless an endpoint says otherwise:
 
 Browser clients may call the API from `http://localhost:3000` and `http://localhost:5173`. CORS allows `Authorization`, `Content-Type`, and `Idempotency-Key`. WebSocket connections enforce the same allowed Origins.
 
-## 2. Authentication and authorization
+## 2. Security baseline
+
+Use the [OWASP API Security Top 10 (2023)](https://owasp.org/projects/api-security-project) as the primary API risk checklist and the [OWASP Top 10 (2025)](https://top10.owasp.org/2025/0x00_2025-Introduction/) for broader application risks. These are review guides; each change must assess how its actual behavior affects the API's tenant boundary and data.
+
+- Every endpoint declares its authentication requirement, allowed roles, tenant scope, and writable/readable fields. Derive tenant identity from the authenticated principal and enforce ownership in every operation that loads or changes tenant data.
+- Validate and bound all client input, including identifiers, query parameters, payload sizes, batch sizes, uploads, and WebSocket messages. Use parameterized database operations and explicit response fields; never bind request objects directly to privileged domain fields or expose secrets and internal errors.
+- Apply Redis-backed sliding-window limits to authenticated routes and stricter limits to public authentication and sensitive business flows. Login uses independent account and source-IP buckets; do not combine them into one per-account-and-IP key. Limits must work across API instances and return a generic `429` with `Retry-After`.
+- Treat third-party responses as untrusted. Use TLS, request timeouts, response size limits, schema/input validation, and an allowlist for destinations and redirects where the API fetches remote resources.
+- Production must fail closed when configuration required by enabled API features is missing or invalid; PostgreSQL, Redis, trusted ingress proxy IPs/CIDRs, and JWT authentication are required here, and the JWT signing secret must contain at least 32 bytes. Trust forwarded client IPs only from those proxies, and configure ingress to overwrite client-supplied `X-Forwarded-For`. Keep CORS origins explicit, disable debug behavior, and keep storage private.
+- Protect credentials and tokens in transit and at rest. Never log passwords, bearer tokens, refresh tokens, or sensitive request bodies. Log security-relevant failures with the request ID, without exposing internal details to clients.
+- Review dependency changes for known vulnerabilities and provenance. Handle exceptional conditions without leaking stack traces, partial writes, or authorization bypasses.
+
+Before merging API changes, review the applicable OWASP risks: broken object/property/function authorization, authentication failures, resource consumption and sensitive business-flow abuse, SSRF, security misconfiguration, inventory gaps, unsafe API consumption, injection, cryptographic failures, supply-chain/integrity failures, security logging, and exceptional-condition handling.
+
+## 3. Authentication and authorization
 
 ### Account rules
 
 - Login uses email and password. Email is globally unique because login has no tenant selector.
 - Passwords are never returned. New Employee passwords must be at least 8 characters and are stored as secure password hashes.
 - Access tokens are bearer tokens valid for 30 minutes. Refresh tokens are valid for 7 days and rotate on use.
-- Logout revokes the submitted refresh token. A rotated or revoked refresh token cannot be reused.
+- Every access token is bound to its refresh-token session, and each authenticated request checks that the session and user remain active. Logout revokes that session immediately; disabling an account or resetting a tenant revokes all affected sessions. A rotated or revoked refresh token cannot be reused.
+- Count every login request toward these initial limits: 10 per account and 100 per source IP in a sliding 15-minute window; 30 refresh attempts per source IP per minute; and 100 authenticated requests per user per minute. Enforce the IP buckets only with the remote address or a forwarded address received from a configured trusted proxy. Never reveal which bucket caused a rejection.
 - Roles are `admin` and `employee`. The API never accepts a caller-supplied role when creating an Employee.
 - Admins can manage Employees and tenant-owned records in their own candidate tenant only. Employees can read their own profile and update only `fullName`, `phone`, and `avatarUrl`.
 - Admin accounts cannot be created, edited, have their role changed, or be deleted through this API.
@@ -42,7 +57,7 @@ Browser clients may call the API from `http://localhost:3000` and `http://localh
 | --- | --- | --- |
 | `POST /auth/login` | Public | Accepts `{ "email", "password" }`; returns access and refresh tokens plus the authenticated user. Invalid credentials return `401` without identifying which field was wrong. |
 | `POST /auth/refresh` | Public | Accepts `{ "refreshToken" }`; returns a new access token and a rotated refresh token. Expired, revoked, or reused tokens return `401`. |
-| `POST /auth/logout` | Authenticated | Accepts `{ "refreshToken" }`, revokes it, and returns `{ "data": null }`. |
+| `POST /auth/logout` | Authenticated | Accepts `{ "refreshToken" }`, revokes its session and all refresh tokens in that session immediately, and returns `{ "data": null }`. |
 
 Login response:
 
@@ -58,9 +73,9 @@ Login response:
 }
 ```
 
-Send the access token as `Authorization: Bearer <accessToken>` on protected REST calls. WebSocket clients obtain a one-use connection ticket as described in section 5; they do not put an access token in the URL.
+Send the access token as `Authorization: Bearer <accessToken>` on protected REST calls. WebSocket clients obtain a one-use ticket as described in the chat section; they do not put an access token in the URL.
 
-## 3. Shared error contract
+## 4. Shared error contract
 
 Errors have this shape, and `requestId` matches the `X-Request-Id` response header:
 
@@ -86,7 +101,7 @@ Errors have this shape, and `requestId` matches the `X-Request-Id` response head
 | `429` | `RATE_LIMITED` | Rate limit exceeded; include `Retry-After`. |
 | `500` | `INTERNAL_ERROR` | Unexpected server failure without internal details. |
 
-## 4. A1: Employees and departments
+## 5. A1: Employees and departments
 
 ### Employee resource
 
@@ -137,7 +152,7 @@ Errors have this shape, and `requestId` matches the `X-Request-Id` response head
 
 Validation: `fullName` is required and 2–100 characters; email must be valid and globally unique; phone must be a valid phone number; `departmentId` must exist; `hireDate` cannot be in the future. Duplicate email returns `409`; field validation returns `422` with `details[]`. The tenant Employee limit is at most 200 login-enabled Employees.
 
-## 5. A2: Employee–Admin chat
+## 6. A2: Employee–Admin chat
 
 ### Conversation and message rules
 
@@ -220,7 +235,7 @@ Server → client:
 
 When a conversation is open, the client marks as read through the last message displayed. Any authenticated session's delivery/read acknowledgement advances the participant's shared position. After reconnect, the client syncs with the REST `after` cursor before relying on live events.
 
-## 6. A3: Project → Phase → Task
+## 7. A3: Project → Phase → Task
 
 ### Domain and validation
 
@@ -286,7 +301,7 @@ Validation rules:
 - Return all validation errors in one `422` response. Nested field paths use bracket notation, for example `phases[0].tasks[1].severity`.
 - `Idempotency-Key` makes retries safe. The same key and payload return the original result; the same key with a different payload returns `409 IDEMPOTENCY_CONFLICT`.
 
-## 7. Candidate readiness and operations
+## 8. Candidate readiness and operations
 
 - Provide at least two isolated candidate tenants, each with an Admin login and a login-enabled Employee account. Credentials are test-only, distinct from production credentials, and shared with candidates outside this API.
 - Candidate-created Employees can log in immediately and chat with their owning Admin.
@@ -295,7 +310,7 @@ Validation rules:
 - Publish OpenAPI/Swagger or a Postman collection for the REST contract and document every WebSocket event above.
 - Deployment is expected to be externally reachable over HTTPS/WSS. The API owner supplies ArgoCD registration, ingress, hostname, TLS, and deployment-specific database selection; those platform choices are outside this API contract.
 
-## 8. Explicitly out of scope
+## 9. Explicitly out of scope
 
 - Building the candidate frontend.
 - Chat attachments and other bonus-only frontend/API features.
