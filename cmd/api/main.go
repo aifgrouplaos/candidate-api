@@ -17,6 +17,7 @@ import (
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/logger"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
+	"github.com/aifgrouplaos/candidate-api/pkg/ratelimit"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 )
@@ -87,7 +88,12 @@ func run() error {
 		token = jwt.New(cfg.JWT)
 	}
 
-	app := newApp(cfg, trustedProxies, db, redisCache, token)
+	var limiter ratelimit.Store
+	if redisCache != nil {
+		limiter = ratelimit.NewRedisStore(redisCache.Client())
+	}
+
+	app := newApp(cfg, trustedProxies, db, limiter, token)
 
 	_ = cache
 	_ = store
@@ -125,7 +131,7 @@ func validateConfig(cfg *config.Config, trustedProxies []string) error {
 	return nil
 }
 
-func newApp(cfg *config.Config, trustedProxies []string, db contract.ORM, redisCache *redis.Cache, token contract.Token) *fiber.App {
+func newApp(cfg *config.Config, trustedProxies []string, db contract.ORM, limiter ratelimit.Store, token contract.Token) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:                 cfg.App.Name,
 		EnableTrustedProxyCheck: true,
@@ -147,10 +153,10 @@ func newApp(cfg *config.Config, trustedProxies []string, db contract.ORM, redisC
 	api := app.Group("/api/v1")
 	authRepository := auth.NewAuthRepository(db)
 	authMiddleware := auth.Authentication(token, authRepository)
-	protected := []fiber.Handler{authMiddleware, auth.UserRateLimit(redisCache)}
-	if db != nil && token != nil && redisCache != nil {
+	protected := []fiber.Handler{authMiddleware, auth.UserRateLimit(limiter)}
+	if db != nil && token != nil && limiter != nil {
 		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(authRepository, token))
-		authHandler.RegisterRoutes(api, auth.LoginRateLimit(redisCache), auth.RefreshRateLimit(redisCache), protected...)
+		authHandler.RegisterRoutes(api, auth.LoginRateLimit(limiter), auth.RefreshRateLimit(limiter), protected...)
 	}
 
 	// TODO: register module routes (repositories need DB_ENABLED=true)
