@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 
@@ -40,6 +41,10 @@ func run() error {
 	trustedProxies, err := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
 	if err != nil {
 		return fmt.Errorf("trusted proxy configuration invalid: %w", err)
+	}
+	allowedOrigins, err := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
+	if err != nil {
+		return fmt.Errorf("allowed origins configuration invalid: %w", err)
 	}
 
 	log := logger.Development()
@@ -94,7 +99,7 @@ func run() error {
 		limiter = ratelimit.NewRedisStore(redisCache.Client())
 	}
 
-	app := newApp(cfg, trustedProxies, db, limiter, token)
+	app := newApp(cfg, trustedProxies, allowedOrigins, db, limiter, token)
 
 	_ = cache
 	_ = store
@@ -132,7 +137,7 @@ func validateConfig(cfg *config.Config, trustedProxies []string) error {
 	return nil
 }
 
-func newApp(cfg *config.Config, trustedProxies []string, db contract.ORM, limiter ratelimit.Store, token contract.Token) *fiber.App {
+func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, db contract.ORM, limiter ratelimit.Store, token contract.Token) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:                 cfg.App.Name,
 		EnableTrustedProxyCheck: true,
@@ -142,7 +147,7 @@ func newApp(cfg *config.Config, trustedProxies []string, db contract.ORM, limite
 		ErrorHandler:            httpresponse.Error,
 	})
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:  "http://localhost:3000,http://localhost:5173",
+		AllowOrigins:  allowedOrigins,
 		AllowMethods:  "GET,POST,PATCH,DELETE,OPTIONS",
 		AllowHeaders:  "Origin,Content-Type,Authorization,Accept-Language,Idempotency-Key,X-Request-Id",
 		ExposeHeaders: "X-Request-Id",
@@ -182,4 +187,32 @@ func parseTrustedProxies(value string) ([]string, error) {
 		proxies = append(proxies, candidate)
 	}
 	return proxies, nil
+}
+
+// defaultAllowedOrigins are the candidate frontends from API_SPEC; the hosted API
+// serves them too, so they are the default in every environment.
+const defaultAllowedOrigins = "http://localhost:3000,http://localhost:5173"
+
+// parseAllowedOrigins replaces the default list and accepts only bare http(s) origins.
+func parseAllowedOrigins(value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return defaultAllowedOrigins, nil
+	}
+	var origins []string
+	for _, candidate := range strings.Split(value, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		u, err := url.Parse(candidate)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			return "", fmt.Errorf("%q must be an http(s) origin such as https://app.example.com", candidate)
+		}
+		origins = append(origins, candidate)
+	}
+	if len(origins) == 0 {
+		return "", errors.New("at least one origin is required; an empty Fiber CORS list allows every origin")
+	}
+	return strings.Join(origins, ","), nil
 }

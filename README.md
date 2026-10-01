@@ -17,7 +17,7 @@ go mod tidy
 go run cmd/api/main.go
 ```
 
-The API listens on `http://localhost:8080`. Check `GET /health` for the scaffold health response. `.env.example` documents the app and adapter settings. Set `JWT_ENABLED=true` and a `JWT_SECRET` of at least 32 bytes when enabling JWT-protected routes. Production also requires Redis and explicit `TRUSTED_PROXIES` IPs/CIDRs for ingress client-IP rate limits.
+The API listens on `http://localhost:8080`. Check `GET /health` for the scaffold health response. `.env.example` documents the app and adapter settings. Set `JWT_ENABLED=true` and a `JWT_SECRET` of at least 32 bytes when enabling JWT-protected routes. Production also requires Redis and explicit `TRUSTED_PROXIES` IPs/CIDRs for ingress client-IP rate limits. `ALLOWED_ORIGINS` overrides the default browser origins (`http://localhost:3000`, `http://localhost:5173`).
 
 ## Project scope
 
