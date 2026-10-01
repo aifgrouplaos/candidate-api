@@ -14,6 +14,9 @@ The privileged user account in a candidate tenant that manages its Employees and
 **Employee**:
 A user account in a candidate tenant representing an employee managed by that tenant's Admin.
 
+**Authenticated session**:
+A single sign-in period that can be revoked independently. Disabling an account or resetting a candidate tenant revokes all affected sessions.
+
 **Sent message**:
 A message that the server has saved successfully.
 
