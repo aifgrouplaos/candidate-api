@@ -65,7 +65,7 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 	ctx := context.Background()
 
 	departments, err := repo.Departments(ctx)
-	if err != nil || len(departments) != len(DefaultDepartments) {
+	if err != nil || len(departments) != len(defaultDepartments) {
 		t.Fatalf("departments = %v, err %v", departments, err)
 	}
 	it := &departments[0].ID

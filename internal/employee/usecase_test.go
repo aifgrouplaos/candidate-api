@@ -151,7 +151,7 @@ func TestCreateMakesEmployeeLoginInCallerTenant(t *testing.T) {
 func TestCreateReportsEveryInvalidField(t *testing.T) {
 	uc := NewEmployeeUsecase(newMemoryRepository())
 	_, err := uc.Create(context.Background(), adminA, CreateEmployeeInput{
-		FullName: "A", Email: "not-an-email", Password: "short", Phone: ptr("call me"),
+		FullName: "A", Email: "not-an-email", Password: "ກຂຄ", Phone: ptr("call me"),
 		DepartmentID: ptr("22222222-2222-2222-2222-222222222222"), Position: ptr(string(make([]byte, 101))),
 		Status: "fired", HireDate: ptr(time.Now().UTC().AddDate(0, 0, 2).Format(time.DateOnly)),
 	})
@@ -230,6 +230,7 @@ func TestPatchEnforcesRoleWritableFields(t *testing.T) {
 		{"version is required", adminA, "e2", `{"fullName":"Valid Name"}`, "VALIDATION_ERROR"},
 		{"stale version conflicts", adminA, "e2", `{"version":2,"fullName":"Valid Name"}`, "VERSION_CONFLICT"},
 		{"invalid employee values are rejected", employeeA, "e1", `{"version":1,"fullName":null,"avatarUrl":"javascript:alert(1)"}`, "VALIDATION_ERROR"},
+		{"avatarUrl must be https", employeeA, "e1", `{"version":1,"avatarUrl":"http://cdn.example.test/a.png"}`, "VALIDATION_ERROR"},
 		{"invalid admin values are rejected", adminA, "e2", `{"version":1,"fullName":"","email":"bad","status":"gone"}`, "VALIDATION_ERROR"},
 	}
 	for _, tc := range cases {

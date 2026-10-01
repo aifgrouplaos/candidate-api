@@ -24,8 +24,8 @@ var (
 	errEmailTaken = *errs.Conflict("The email is already in use.")
 )
 
-// DefaultDepartments are the shared lookup values API_SPEC requires (at least five).
-var DefaultDepartments = []string{"IT", "Human Resources", "Finance", "Marketing", "Operations"}
+// defaultDepartments must keep at least five entries.
+var defaultDepartments = []string{"IT", "Human Resources", "Finance", "Marketing", "Operations"}
 
 type employeeRepository struct {
 	db contract.ORM
@@ -35,10 +35,10 @@ func NewEmployeeRepository(db contract.ORM) EmployeeRepository {
 	return &employeeRepository{db: db}
 }
 
-// SeedDepartments inserts DefaultDepartments, keeping any that already exist.
+// SeedDepartments inserts defaultDepartments, keeping any that already exist.
 func SeedDepartments(ctx context.Context, db contract.ORM) error {
-	departments := make([]Department, len(DefaultDepartments))
-	for i, name := range DefaultDepartments {
+	departments := make([]Department, len(defaultDepartments))
+	for i, name := range defaultDepartments {
 		departments[i] = Department{Name: name}
 	}
 	return db.Session(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&departments).Error
@@ -112,7 +112,7 @@ func (r *employeeRepository) Create(ctx context.Context, employee *Employee, log
 		employee.Version = 1
 		return tx.Omit("Department").Create(employee).Error
 	})
-	return translate(err)
+	return emailConflict(err)
 }
 
 func (r *employeeRepository) Update(ctx context.Context, employee *Employee, expectedVersion int) error {
@@ -136,7 +136,7 @@ func (r *employeeRepository) Update(ctx context.Context, employee *Employee, exp
 		return tx.Model(&auth.User{}).Where("id = ?", *employee.UserID).
 			Updates(map[string]any{"email": employee.Email, "full_name": employee.FullName}).Error
 	})
-	return translate(err)
+	return emailConflict(err)
 }
 
 func (r *employeeRepository) Delete(ctx context.Context, tenantID, id string, now time.Time) error {
@@ -175,7 +175,7 @@ func (r *employeeRepository) Departments(ctx context.Context) ([]Department, err
 	return departments, err
 }
 
-func translate(err error) error {
+func emailConflict(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
 		return errEmailTaken

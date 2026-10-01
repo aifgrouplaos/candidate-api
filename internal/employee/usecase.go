@@ -23,6 +23,7 @@ const (
 	defaultLimit    = 20
 	maxLimit        = 100
 	maxPage         = 1_000_000
+	msgStatus       = "Status must be active, inactive, or on_leave."
 )
 
 var (
@@ -136,7 +137,7 @@ func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query 
 			continue
 		}
 		if !status.Valid() {
-			v.add("status", "Status must be active, inactive, or on_leave.")
+			v.add("status", msgStatus)
 			break
 		}
 		filter.Statuses = append(filter.Statuses, status)
@@ -207,7 +208,7 @@ func (u *employeeUsecase) Create(ctx context.Context, actor auth.Principal, inpu
 	if input.Status != "" {
 		employee.Status = v.status(input.Status)
 	}
-	if len(input.Password) < 8 || len(input.Password) > 72 {
+	if utf8.RuneCountInString(input.Password) < 8 || len(input.Password) > 72 {
 		v.add("password", "Password must be at least 8 characters and at most 72 bytes.")
 	}
 	departmentID, err := u.department(ctx, &v, input.DepartmentID)
@@ -274,9 +275,6 @@ func (u *employeeUsecase) Update(ctx context.Context, actor auth.Principal, id s
 	}
 	if err := v.err(); err != nil {
 		return nil, err
-	}
-	if *input.Version != employee.Version {
-		return nil, apierror.VersionConflict
 	}
 	if err := u.repo.Update(ctx, employee, *input.Version); err != nil {
 		return nil, err
@@ -394,13 +392,11 @@ func (v *validation) position(value *string) *string {
 
 func (v *validation) status(value Status) Status {
 	if !value.Valid() {
-		v.add("status", "Status must be active, inactive, or on_leave.")
+		v.add("status", msgStatus)
 	}
 	return value
 }
 
-// ponytail: compares against the UTC clock, so in UTC+ zones today's local date is rejected
-// until UTC midnight; accept a client time zone if candidates report it.
 func (v *validation) hireDate(value *string) *time.Time {
 	value = optional(value)
 	if value == nil {
@@ -411,7 +407,8 @@ func (v *validation) hireDate(value *string) *time.Time {
 		v.add("hireDate", "Hire date must be a YYYY-MM-DD date.")
 		return nil
 	}
-	if date.After(time.Now().UTC()) {
+	// UTC+14 is the earliest time zone, so this accepts any date that is already today somewhere.
+	if date.After(time.Now().UTC().Add(14 * time.Hour)) {
 		v.add("hireDate", "Hire date cannot be in the future.")
 	}
 	return &date
@@ -423,8 +420,8 @@ func (v *validation) avatarURL(value *string) *string {
 		return nil
 	}
 	parsed, err := url.Parse(*value)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || len(*value) > 2048 {
-		v.add("avatarUrl", "Avatar URL must be an http(s) URL.")
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || len(*value) > 2048 {
+		v.add("avatarUrl", "Avatar URL must be an https URL.")
 	}
 	return value
 }
