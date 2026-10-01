@@ -31,6 +31,11 @@ func Success(c *fiber.Ctx, data any) error {
 	return c.JSON(fiber.Map{"data": data})
 }
 
+func Page(c *fiber.Ctx, data, meta any) error {
+	setRequestID(c)
+	return c.JSON(fiber.Map{"data": data, "meta": meta})
+}
+
 // Error is the app-wide fiber.ErrorHandler; handlers and middleware just return errors.
 func Error(c *fiber.Ctx, err error) error {
 	setRequestID(c)
