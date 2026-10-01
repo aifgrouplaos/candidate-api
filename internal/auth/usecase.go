@@ -138,11 +138,11 @@ func (u *authUsecase) newSession(ctx context.Context, user *User) (*Session, err
 }
 
 func (u *authUsecase) session(user *User, sessionID, refreshToken string, includeUser bool) (*Session, error) {
-	if user.Role != RoleAdmin && user.Role != RoleEmployee || user.ID == "" || user.TenantID == "" {
+	if !user.Role.Valid() || user.ID == "" || user.TenantID == "" {
 		return nil, errs.Internal("account is not configured for authentication")
 	}
 	accessToken, err := u.token.Sign(contract.Claims{
-		"sub": user.ID, "tenantId": user.TenantID, "role": string(user.Role), "sid": sessionID,
+		claimUserID: user.ID, claimTenantID: user.TenantID, claimRole: string(user.Role), claimSessionID: sessionID,
 	}, accessTokenTTL)
 	if err != nil {
 		return nil, errs.Internal("could not issue a session")

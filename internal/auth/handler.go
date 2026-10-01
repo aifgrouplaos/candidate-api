@@ -14,10 +14,12 @@ type AuthHandler struct{ usecase AuthUsecase }
 
 func NewAuthHandler(usecase AuthUsecase) *AuthHandler { return &AuthHandler{usecase: usecase} }
 
-func (h *AuthHandler) RegisterRoutes(public, protected fiber.Router, loginLimit, refreshLimit fiber.Handler) {
-	public.Post("/auth/login", loginLimit, h.Login)
-	public.Post("/auth/refresh", refreshLimit, h.Refresh)
-	protected.Post("/auth/logout", h.Logout)
+// RegisterRoutes takes the protected-route middleware as handlers because a Fiber
+// Group("", middleware) on the same prefix would also run it on login and refresh.
+func (h *AuthHandler) RegisterRoutes(router fiber.Router, loginLimit, refreshLimit fiber.Handler, protected ...fiber.Handler) {
+	router.Post("/auth/login", loginLimit, h.Login)
+	router.Post("/auth/refresh", refreshLimit, h.Refresh)
+	router.Post("/auth/logout", append(protected, h.Logout)...)
 }
 
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
@@ -79,20 +81,19 @@ func Authentication(token contract.Token, sessions SessionValidator) fiber.Handl
 		if token == nil || sessions == nil {
 			return writeError(c, errs.ErrUnauthorized)
 		}
-		header := c.Get(fiber.HeaderAuthorization)
-		if !strings.HasPrefix(header, "Bearer ") {
+		raw, ok := strings.CutPrefix(c.Get(fiber.HeaderAuthorization), "Bearer ")
+		if !ok {
 			return writeError(c, errs.ErrUnauthorized)
 		}
-		claims, err := token.Verify(strings.TrimPrefix(header, "Bearer "))
+		claims, err := token.Verify(raw)
 		if err != nil {
 			return writeError(c, errs.ErrUnauthorized)
 		}
-		userID, userOK := claims["sub"].(string)
-		tenantID, tenantOK := claims["tenantId"].(string)
-		role, roleOK := claims["role"].(string)
-		sessionID, sessionOK := claims["sid"].(string)
-		if !userOK || userID == "" || !tenantOK || tenantID == "" || !sessionOK || sessionID == "" || !roleOK ||
-			(role != string(RoleAdmin) && role != string(RoleEmployee)) {
+		userID, _ := claims[claimUserID].(string)
+		tenantID, _ := claims[claimTenantID].(string)
+		role, _ := claims[claimRole].(string)
+		sessionID, _ := claims[claimSessionID].(string)
+		if userID == "" || tenantID == "" || sessionID == "" || !Role(role).Valid() {
 			return writeError(c, errs.ErrUnauthorized)
 		}
 		active, err := sessions.SessionActive(c.UserContext(), sessionID, userID, tenantID)
@@ -146,14 +147,14 @@ func writeError(c *fiber.Ctx, err error) error {
 	}
 	return c.Status(status).JSON(errorResponse{
 		Error:     errorBody{Code: code, Message: message, Details: details},
-		RequestID: c.GetRespHeader("X-Request-Id"),
+		RequestID: c.GetRespHeader(fiber.HeaderXRequestID),
 	})
 }
 
 func setRequestID(c *fiber.Ctx) {
-	id := strings.TrimSpace(c.Get("X-Request-Id"))
+	id := strings.TrimSpace(c.Get(fiber.HeaderXRequestID))
 	if id == "" {
 		id = uuid.NewString()
 	}
-	c.Set("X-Request-Id", id)
+	c.Set(fiber.HeaderXRequestID, id)
 }

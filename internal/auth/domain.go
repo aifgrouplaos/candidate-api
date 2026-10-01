@@ -12,6 +12,15 @@ const (
 	RoleEmployee Role = "employee"
 )
 
+func (r Role) Valid() bool { return r == RoleAdmin || r == RoleEmployee }
+
+const (
+	claimUserID    = "sub"
+	claimTenantID  = "tenantId"
+	claimRole      = "role"
+	claimSessionID = "sid"
+)
+
 type User struct {
 	ID           string    `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
 	TenantID     string    `json:"tenantId" gorm:"type:uuid;not null;index"`

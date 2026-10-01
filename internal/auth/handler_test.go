@@ -28,7 +28,7 @@ func TestLoginEndpointContract(t *testing.T) {
 	handler := NewAuthHandler(NewAuthUsecase(repo, token))
 	app := fiber.New()
 	pass := func(c *fiber.Ctx) error { return c.Next() }
-	handler.RegisterRoutes(app, app.Group("", Authentication(token, repo)), pass, pass)
+	handler.RegisterRoutes(app, pass, pass, Authentication(token, repo))
 
 	request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"admin@example.test","password":"password-123"}`))
 	request.Header.Set("Content-Type", fiber.MIMEApplicationJSON)
@@ -81,6 +81,48 @@ func TestLoginEndpointContract(t *testing.T) {
 	}
 	if failure.Error.Code != "UNAUTHORIZED" || failure.RequestID == "" {
 		t.Fatalf("invalid credential response: %+v", failure)
+	}
+}
+
+func TestLoginAccessTokenAuthenticatesLogout(t *testing.T) {
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password-123"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &memoryAuthRepository{
+		user:   &User{ID: "user-1", TenantID: "tenant-1", Email: "admin@example.test", PasswordHash: string(passwordHash), Role: RoleAdmin, Active: true},
+		tokens: make(map[string]*RefreshToken), sessions: make(map[string]*AuthSession),
+	}
+	token := jwt.New(config.JWT{Secret: "test-secret"})
+	app := fiber.New()
+	pass := func(c *fiber.Ctx) error { return c.Next() }
+	NewAuthHandler(NewAuthUsecase(repo, token)).RegisterRoutes(app, pass, pass, Authentication(token, repo))
+
+	request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"admin@example.test","password":"password-123"}`))
+	request.Header.Set("Content-Type", fiber.MIMEApplicationJSON)
+	response, err := app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d, want 200", response.StatusCode)
+	}
+	var login struct{ Data Session }
+	if err := json.NewDecoder(response.Body).Decode(&login); err != nil {
+		t.Fatal(err)
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/auth/logout", strings.NewReader(`{"refreshToken":"`+login.Data.RefreshToken+`"}`))
+	request.Header.Set("Content-Type", fiber.MIMEApplicationJSON)
+	request.Header.Set("Authorization", "Bearer "+login.Data.AccessToken)
+	response, err = app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("logout status = %d, want 200", response.StatusCode)
 	}
 }
 

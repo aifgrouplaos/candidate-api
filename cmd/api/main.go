@@ -114,16 +114,16 @@ func main() {
 	api := app.Group("/api/v1")
 	authRepository := auth.NewAuthRepository(db)
 	authMiddleware := auth.Authentication(token, authRepository)
-	protectedAPI := api.Group("", authMiddleware, auth.UserRateLimit(redisCache))
+	protected := []fiber.Handler{authMiddleware, auth.UserRateLimit(redisCache)}
 	if db != nil && token != nil && redisCache != nil {
 		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(authRepository, token))
-		authHandler.RegisterRoutes(api, protectedAPI, auth.LoginRateLimit(redisCache), auth.RefreshRateLimit(redisCache))
+		authHandler.RegisterRoutes(api, auth.LoginRateLimit(redisCache), auth.RefreshRateLimit(redisCache), protected...)
 	}
 
 	// TODO: register module routes (repositories need DB_ENABLED=true)
 	// userHandler := user.NewUserHandler(user.NewUserUsecase(user.NewUserRepository(db)))
-	// userHandler.RegisterRoutes(protectedAPI)
-	_ = protectedAPI
+	// userHandler.RegisterRoutes(api, protected...)
+	_ = protected
 	_ = db
 	_ = cache
 	_ = store
