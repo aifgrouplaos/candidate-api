@@ -20,6 +20,7 @@ import (
 const (
 	accessTokenTTL  = 30 * time.Minute
 	refreshTokenTTL = 7 * 24 * time.Hour
+	msgIssueSession = "could not issue a session"
 )
 
 type Credentials struct {
@@ -95,7 +96,7 @@ func (u *authUsecase) Refresh(ctx context.Context, input RefreshInput) (*Session
 	}
 	raw, err := newRefreshToken()
 	if err != nil {
-		return nil, errs.Internal("could not issue a session")
+		return nil, errs.Internal(msgIssueSession)
 	}
 	session, err := u.session(user, old.SessionID, raw, false)
 	if err != nil {
@@ -121,7 +122,7 @@ func (u *authUsecase) Logout(ctx context.Context, userID, sessionID string, inpu
 func (u *authUsecase) newSession(ctx context.Context, user *User) (*Session, error) {
 	raw, err := newRefreshToken()
 	if err != nil {
-		return nil, errs.Internal("could not issue a session")
+		return nil, errs.Internal(msgIssueSession)
 	}
 	sessionID := uuid.NewString()
 	session, err := u.session(user, sessionID, raw, true)
@@ -132,7 +133,7 @@ func (u *authUsecase) newSession(ctx context.Context, user *User) (*Session, err
 		&AuthSession{ID: sessionID, UserID: user.ID, TenantID: user.TenantID},
 		&RefreshToken{UserID: user.ID, SessionID: sessionID, TokenHash: hashToken(raw), ExpiresAt: time.Now().UTC().Add(refreshTokenTTL)},
 	); err != nil {
-		return nil, errs.Internal("could not issue a session")
+		return nil, errs.Internal(msgIssueSession)
 	}
 	return session, nil
 }
@@ -145,7 +146,7 @@ func (u *authUsecase) session(user *User, sessionID, refreshToken string, includ
 		claimUserID: user.ID, claimTenantID: user.TenantID, claimRole: string(user.Role), claimSessionID: sessionID,
 	}, accessTokenTTL)
 	if err != nil {
-		return nil, errs.Internal("could not issue a session")
+		return nil, errs.Internal(msgIssueSession)
 	}
 	session := &Session{
 		AccessToken: accessToken, RefreshToken: refreshToken,
