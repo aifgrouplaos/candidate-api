@@ -18,6 +18,7 @@ import (
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/logger"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
+	"github.com/aifgrouplaos/candidate-api/pkg/apidocs"
 	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
 	"github.com/aifgrouplaos/candidate-api/pkg/ratelimit"
 	"github.com/gofiber/fiber/v2"
@@ -156,6 +157,7 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "app": cfg.App.Name})
 	})
+	apidocs.Register(app)
 
 	api := app.Group("/api/v1")
 	authRepository := auth.NewAuthRepository(db)
