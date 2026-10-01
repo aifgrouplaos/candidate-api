@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -20,17 +22,22 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("startup failed", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	ctx := context.Background()
 
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("config load failed", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("config load failed: %w", err)
 	}
 	trustedProxies, err := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
 	if err != nil {
-		slog.Error("trusted proxy configuration invalid", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("trusted proxy configuration invalid: %w", err)
 	}
 
 	log := logger.Development()
@@ -38,9 +45,8 @@ func main() {
 		log = logger.Production()
 	}
 	slog.SetDefault(log)
-	if cfg.App.Env == "production" && (!cfg.PostgresEnabled || !cfg.JWTEnabled || len([]byte(cfg.JWT.Secret)) < 32 || !cfg.RedisEnabled || len(trustedProxies) == 0) {
-		slog.Error("production requires PostgreSQL, Redis, trusted proxy addresses, JWT, and a JWT secret of at least 32 bytes")
-		os.Exit(1)
+	if err := validateConfig(cfg, trustedProxies); err != nil {
+		return err
 	}
 
 	// Composition root: construct adapters only when enabled, hold them as ports.
@@ -53,39 +59,27 @@ func main() {
 	)
 
 	if cfg.PostgresEnabled {
-		gormDB, err := gormadapter.New(cfg.Postgres)
+		gormDB, err := openPostgres(cfg.Postgres)
 		if err != nil {
-			slog.Error("postgres connect failed", "error", err)
-			os.Exit(1)
+			return err
 		}
 		defer gormDB.Close()
 		db = gormDB
-
-		if err := gormDB.Raw().AutoMigrate(&auth.User{}, &auth.AuthSession{}, &auth.RefreshToken{}); err != nil {
-			slog.Error("automigrate failed", "error", err)
-			os.Exit(1)
-		}
 	}
 
 	if cfg.RedisEnabled {
 		redisCache, err = redis.New(ctx, cfg.Redis)
 		if err != nil {
-			slog.Error("redis connect failed", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("redis connect failed: %w", err)
 		}
 		cache = redisCache
 		defer cache.Close()
-	}
-	if cfg.PostgresEnabled && cfg.JWTEnabled && redisCache == nil {
-		slog.Error("Redis is required when authenticated API routes are enabled")
-		os.Exit(1)
 	}
 
 	if cfg.MinIOEnabled {
 		store, err = minioadapter.New(ctx, cfg.MinIO)
 		if err != nil {
-			slog.Error("minio connect failed", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("minio connect failed: %w", err)
 		}
 	}
 
@@ -93,6 +87,45 @@ func main() {
 		token = jwt.New(cfg.JWT)
 	}
 
+	app := newApp(cfg, trustedProxies, db, redisCache, token)
+
+	_ = cache
+	_ = store
+
+	slog.Info("server starting",
+		"port", cfg.App.Port,
+		"env", cfg.App.Env,
+		"postgres", cfg.PostgresEnabled,
+		"redis", cfg.RedisEnabled,
+		"minio", cfg.MinIOEnabled,
+		"jwt", cfg.JWTEnabled,
+	)
+	return app.Listen(":" + cfg.App.Port)
+}
+
+func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
+	gormDB, err := gormadapter.New(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("postgres connect failed: %w", err)
+	}
+	if err := gormDB.Raw().AutoMigrate(&auth.User{}, &auth.AuthSession{}, &auth.RefreshToken{}); err != nil {
+		gormDB.Close()
+		return nil, fmt.Errorf("automigrate failed: %w", err)
+	}
+	return gormDB, nil
+}
+
+func validateConfig(cfg *config.Config, trustedProxies []string) error {
+	if cfg.App.Env == "production" && (!cfg.PostgresEnabled || !cfg.JWTEnabled || len([]byte(cfg.JWT.Secret)) < 32 || !cfg.RedisEnabled || len(trustedProxies) == 0) {
+		return errors.New("production requires PostgreSQL, Redis, trusted proxy addresses, JWT, and a JWT secret of at least 32 bytes")
+	}
+	if cfg.PostgresEnabled && cfg.JWTEnabled && !cfg.RedisEnabled {
+		return errors.New("Redis is required when authenticated API routes are enabled")
+	}
+	return nil
+}
+
+func newApp(cfg *config.Config, trustedProxies []string, db contract.ORM, redisCache *redis.Cache, token contract.Token) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:                 cfg.App.Name,
 		EnableTrustedProxyCheck: true,
@@ -123,23 +156,7 @@ func main() {
 	// TODO: register module routes (repositories need DB_ENABLED=true)
 	// userHandler := user.NewUserHandler(user.NewUserUsecase(user.NewUserRepository(db)))
 	// userHandler.RegisterRoutes(api, protected...)
-	_ = protected
-	_ = db
-	_ = cache
-	_ = store
-
-	slog.Info("server starting",
-		"port", cfg.App.Port,
-		"env", cfg.App.Env,
-		"postgres", cfg.PostgresEnabled,
-		"redis", cfg.RedisEnabled,
-		"minio", cfg.MinIOEnabled,
-		"jwt", cfg.JWTEnabled,
-	)
-	if err := app.Listen(":" + cfg.App.Port); err != nil {
-		slog.Error("server error", "error", err)
-		os.Exit(1)
-	}
+	return app
 }
 
 func parseTrustedProxies(value string) ([]string, error) {
