@@ -8,11 +8,13 @@ import (
 )
 
 //go:embed openapi.yaml
-var contract []byte
+var spec []byte
 
 // Swagger UI is pinned with SRI hashes because the page runs on the API origin
 // and persists the bearer token; bump version and hashes together.
-const page = `<!doctype html>
+// ponytail: loaded from jsDelivr, so /docs needs CDN access; vendor swagger-ui-dist
+// into an embed.FS if the docs must work offline.
+const swaggerPage = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -22,17 +24,17 @@ const page = `<!doctype html>
 <body>
 <div id="swagger-ui"></div>
 <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.33.0/swagger-ui-bundle.js" integrity="sha384-YDALVcy8kj8yltLBVi1vBiBAUqdxvus673gM8XKwiy6aDUJFXivF/KCufekjYbVf" crossorigin="anonymous"></script>
-<script>SwaggerUIBundle({ url: "/openapi.yaml", dom_id: "#swagger-ui", persistAuthorization: true });</script>
+<script>SwaggerUIBundle({ url: "/openapi.yaml", dom_id: "#swagger-ui", persistAuthorization: true, validatorUrl: null });</script>
 </body>
 </html>`
 
 // Register mounts GET /docs (Swagger UI) and GET /openapi.yaml (raw contract).
 func Register(router fiber.Router) {
 	router.Get("/docs", func(c *fiber.Ctx) error {
-		return c.Type("html").SendString(page)
+		return c.Type("html").SendString(swaggerPage)
 	})
 	router.Get("/openapi.yaml", func(c *fiber.Ctx) error {
 		c.Set(fiber.HeaderContentType, "application/yaml")
-		return c.Send(contract)
+		return c.Send(spec)
 	})
 }

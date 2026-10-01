@@ -21,7 +21,10 @@ func TestRegisterServesDocsAndContract(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		body, _ := io.ReadAll(response.Body)
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if response.StatusCode != fiber.StatusOK {
 			t.Errorf("%s status = %d", path, response.StatusCode)
 		}
