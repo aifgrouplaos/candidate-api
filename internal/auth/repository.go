@@ -11,6 +11,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+const whereActiveID = "id = ? AND revoked_at IS NULL"
+
 type authRepository struct{ db contract.ORM }
 
 func NewAuthRepository(db contract.ORM) AuthRepository { return &authRepository{db: db} }
@@ -48,7 +50,7 @@ func (r *authRepository) RotateRefreshToken(ctx context.Context, oldHash string,
 		if user.ID != expectedUser.ID || user.TenantID != expectedUser.TenantID || user.Role != expectedUser.Role || replacement.SessionID != old.SessionID {
 			return errs.ErrUnauthorized
 		}
-		result := tx.Model(&RefreshToken{}).Where("id = ? AND revoked_at IS NULL", old.ID).Update("revoked_at", now)
+		result := tx.Model(&RefreshToken{}).Where(whereActiveID, old.ID).Update("revoked_at", now)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -72,7 +74,7 @@ func findRefreshUser(db *gorm.DB, hash string, now time.Time) (*User, *RefreshTo
 	}
 	var session AuthSession
 	if err := db.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("id = ? AND revoked_at IS NULL", old.SessionID).First(&session).Error; err != nil {
+		Where(whereActiveID, old.SessionID).First(&session).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil, errs.ErrUnauthorized
 		}
@@ -101,7 +103,7 @@ func (r *authRepository) RevokeSession(ctx context.Context, hash, userID, sessio
 		if user.ID != userID || token.SessionID != sessionID {
 			return errs.ErrUnauthorized
 		}
-		result := tx.Model(&AuthSession{}).Where("id = ? AND revoked_at IS NULL", sessionID).Update("revoked_at", now)
+		result := tx.Model(&AuthSession{}).Where(whereActiveID, sessionID).Update("revoked_at", now)
 		if result.Error != nil {
 			return result.Error
 		}
