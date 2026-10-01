@@ -44,7 +44,7 @@ func LoginRateLimit(cache *redisadapter.Cache) fiber.Handler {
 		var input Credentials
 		_ = json.Unmarshal(c.Body(), &input)
 		email := strings.ToLower(strings.TrimSpace(input.Email))
-		buckets := []rateBucket{{name: "login-ip", key: c.IP(), limit: 100, window: 15 * time.Minute}}
+		buckets := []rateBucket{{name: "login-ip", key: clientIP(c), limit: 100, window: 15 * time.Minute}}
 		if email != "" {
 			buckets = append(buckets, rateBucket{name: "login-account", key: email, limit: 10, window: 15 * time.Minute})
 		}
@@ -54,8 +54,17 @@ func LoginRateLimit(cache *redisadapter.Cache) fiber.Handler {
 
 func RefreshRateLimit(cache *redisadapter.Cache) fiber.Handler {
 	return redisRateLimit(cache, func(c *fiber.Ctx) []rateBucket {
-		return []rateBucket{{name: "refresh-ip", key: c.IP(), limit: 30, window: time.Minute}}
+		return []rateBucket{{name: "refresh-ip", key: clientIP(c), limit: 30, window: time.Minute}}
 	})
+}
+
+// clientIP takes the last X-Forwarded-For entry because a trusted proxy appends the
+// address it saw; earlier entries are client-controlled.
+func clientIP(c *fiber.Ctx) string {
+	if ips := c.IPs(); c.IsProxyTrusted() && len(ips) > 0 {
+		return ips[len(ips)-1]
+	}
+	return c.Context().RemoteIP().String()
 }
 
 func UserRateLimit(cache *redisadapter.Cache) fiber.Handler {
