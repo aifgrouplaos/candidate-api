@@ -1,4 +1,4 @@
-package auth
+package ratelimit
 
 import (
 	"io"
@@ -21,7 +21,7 @@ func TestClientIP(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			app := fiber.New(fiber.Config{EnableTrustedProxyCheck: true, TrustedProxies: tc.trusted, ProxyHeader: fiber.HeaderXForwardedFor, EnableIPValidation: true})
-			app.Get("/", func(c *fiber.Ctx) error { return c.SendString(clientIP(c)) })
+			app.Get("/", func(c *fiber.Ctx) error { return c.SendString(ClientIP(c)) })
 			request := httptest.NewRequest(http.MethodGet, "/", nil)
 			if tc.header != "" {
 				request.Header.Set(fiber.HeaderXForwardedFor, tc.header)
@@ -33,7 +33,7 @@ func TestClientIP(t *testing.T) {
 			defer response.Body.Close()
 			body, _ := io.ReadAll(response.Body)
 			if string(body) != tc.want {
-				t.Fatalf("clientIP = %q, want %q", body, tc.want)
+				t.Fatalf("ClientIP = %q, want %q", body, tc.want)
 			}
 		})
 	}
