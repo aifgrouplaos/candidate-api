@@ -54,6 +54,20 @@ func New(store Store, buckets func(*fiber.Ctx) []Bucket) fiber.Handler {
 	}
 }
 
+// PerUser applies the general authenticated-route limit and rejects requests whose
+// userID is empty, so it must run after authentication.
+func PerUser(store Store, userID func(*fiber.Ctx) string) fiber.Handler {
+	limit := New(store, func(c *fiber.Ctx) []Bucket {
+		return []Bucket{{Name: "api-user", Key: userID(c), Limit: 100, Window: time.Minute}}
+	})
+	return func(c *fiber.Ctx) error {
+		if userID(c) == "" {
+			return errs.ErrUnauthorized
+		}
+		return limit(c)
+	}
+}
+
 // ClientIP takes the last X-Forwarded-For entry because a trusted proxy appends the
 // address it saw; earlier entries are client-controlled.
 func ClientIP(c *fiber.Ctx) string {

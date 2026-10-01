@@ -1,11 +1,14 @@
 package auth
 
 import (
+	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
+	"github.com/aifgrouplaos/candidate-api/pkg/ratelimit"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -72,6 +75,32 @@ const principalKey = "authPrincipal"
 func PrincipalFrom(c *fiber.Ctx) (Principal, bool) {
 	principal, ok := c.Locals(principalKey).(Principal)
 	return principal, ok
+}
+
+// UserID returns the authenticated user's ID, or "" before Authentication has run.
+func UserID(c *fiber.Ctx) string {
+	principal, _ := PrincipalFrom(c)
+	return principal.UserID
+}
+
+// LoginRateLimit keeps account and source-IP buckets independent, as API_SPEC requires.
+func LoginRateLimit(store ratelimit.Store) fiber.Handler {
+	return ratelimit.New(store, func(c *fiber.Ctx) []ratelimit.Bucket {
+		var input Credentials
+		_ = json.Unmarshal(c.Body(), &input)
+		email := strings.ToLower(strings.TrimSpace(input.Email))
+		buckets := []ratelimit.Bucket{{Name: "login-ip", Key: ratelimit.ClientIP(c), Limit: 100, Window: 15 * time.Minute}}
+		if email != "" {
+			buckets = append(buckets, ratelimit.Bucket{Name: "login-account", Key: email, Limit: 10, Window: 15 * time.Minute})
+		}
+		return buckets
+	})
+}
+
+func RefreshRateLimit(store ratelimit.Store) fiber.Handler {
+	return ratelimit.New(store, func(c *fiber.Ctx) []ratelimit.Bucket {
+		return []ratelimit.Bucket{{Name: "refresh-ip", Key: ratelimit.ClientIP(c), Limit: 30, Window: time.Minute}}
+	})
 }
 
 // Authentication verifies token expiry and requires the identity, tenant, and role claims.

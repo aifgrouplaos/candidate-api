@@ -55,6 +55,36 @@ func TestNew(t *testing.T) {
 	}
 }
 
+func TestPerUser(t *testing.T) {
+	for name, tc := range map[string]struct {
+		user       string
+		store      Store
+		wantStatus int
+	}{
+		"anonymous rejected":  {"", fakeStore{}, fiber.StatusUnauthorized},
+		"user under limit":    {"u1", fakeStore{}, fiber.StatusOK},
+		"user over limit 429": {"u1", fakeStore{exceeded: true}, fiber.StatusTooManyRequests},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fail := func(c *fiber.Ctx, err error) error {
+				appErr, _ := errs.IsAppError(err)
+				return c.SendStatus(appErr.Status)
+			}
+			app := fiber.New(fiber.Config{ErrorHandler: fail})
+			userID := func(*fiber.Ctx) string { return tc.user }
+			app.Get("/", PerUser(tc.store, userID), func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+			response, err := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != tc.wantStatus {
+				t.Fatalf("got status %d, want %d", response.StatusCode, tc.wantStatus)
+			}
+		})
+	}
+}
+
 func TestClientIP(t *testing.T) {
 	for name, tc := range map[string]struct {
 		trusted []string

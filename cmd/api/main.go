@@ -160,7 +160,7 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 	api := app.Group("/api/v1")
 	authRepository := auth.NewAuthRepository(db)
 	authMiddleware := auth.Authentication(token, authRepository)
-	protected := []fiber.Handler{authMiddleware, auth.UserRateLimit(limiter)}
+	protected := []fiber.Handler{authMiddleware, ratelimit.PerUser(limiter, auth.UserID)}
 	if db != nil && token != nil && limiter != nil {
 		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(authRepository, token))
 		authHandler.RegisterRoutes(api, auth.LoginRateLimit(limiter), auth.RefreshRateLimit(limiter), protected...)
