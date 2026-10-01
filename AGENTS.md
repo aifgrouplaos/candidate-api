@@ -15,6 +15,25 @@ Use [Conventional Commits](https://www.conventionalcommits.org/): `<type>(<scope
 
 Examples: `feat(auth): add refresh token rotation`, `fix(ratelimit): use last X-Forwarded-For IP`, `docs: document trusted proxy setup`.
 
+### Code structure
+
+Follow the `bkgo` skill for all backend structure, for maintainability and readability.
+
+- Create, add, or remove modules and layers with the `bkgo` CLI, not by hand.
+- Each `internal/<module>` keeps only the bkgo files: `domain.go`, `usecase.go`, `handler.go`, `repository.go`, and their tests. Put module-specific HTTP middleware, such as route rate-limit policies, in `handler.go`.
+- Keep layer rules: entities and ports in `domain.go`, business rules in `usecase.go`, HTTP only in `handler.go`, persistence only in `repository.go`. Only `cmd/api/main.go` builds adapters.
+- Put cross-module code in `pkg/` (e.g. `pkg/ratelimit`, `pkg/httpresponse`). `pkg/` never imports `internal/`; pass module values in as functions or ports instead.
+- Keep the project's `pkg/httpresponse` envelope instead of bkgo's template response helpers.
+
+### Refactoring
+
+Follow the `refactor` skill when changing existing code, for maintainability and readability.
+
+- Preserve behavior: never mix a refactor with a feature or behavior change.
+- Make small steps, run `go fmt ./...`, `go vet ./...`, and `go test ./...` after each, and commit at safe states.
+- Add a test before refactoring code that lacks one.
+- Remove dead code and duplication instead of working around them.
+
 ### Issue tracker
 
 Track issues and specs in GitHub Issues. Read `docs/agents/issue-tracker.md`
