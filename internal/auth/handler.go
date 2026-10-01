@@ -1,13 +1,12 @@
 package auth
 
 import (
-	"log/slog"
 	"strings"
 
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/errs"
+	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 type AuthHandler struct{ usecase AuthUsecase }
@@ -25,40 +24,40 @@ func (h *AuthHandler) RegisterRoutes(router fiber.Router, loginLimit, refreshLim
 func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	var input Credentials
 	if err := c.BodyParser(&input); err != nil {
-		return writeError(c, errs.ErrBadRequest)
+		return errs.ErrBadRequest
 	}
 	result, err := h.usecase.Login(c.UserContext(), input)
 	if err != nil {
-		return writeError(c, err)
+		return err
 	}
-	return writeSuccess(c, result)
+	return httpresponse.Success(c, result)
 }
 
 func (h *AuthHandler) Refresh(c *fiber.Ctx) error {
 	var input RefreshInput
 	if err := c.BodyParser(&input); err != nil {
-		return writeError(c, errs.ErrBadRequest)
+		return errs.ErrBadRequest
 	}
 	result, err := h.usecase.Refresh(c.UserContext(), input)
 	if err != nil {
-		return writeError(c, err)
+		return err
 	}
-	return writeSuccess(c, result)
+	return httpresponse.Success(c, result)
 }
 
 func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 	var input RefreshInput
 	if err := c.BodyParser(&input); err != nil {
-		return writeError(c, errs.ErrBadRequest)
+		return errs.ErrBadRequest
 	}
 	principal, ok := PrincipalFrom(c)
 	if !ok {
-		return writeError(c, errs.ErrUnauthorized)
+		return errs.ErrUnauthorized
 	}
 	if err := h.usecase.Logout(c.UserContext(), principal.UserID, principal.SessionID, input); err != nil {
-		return writeError(c, err)
+		return err
 	}
-	return writeSuccess(c, nil)
+	return httpresponse.Success(c, nil)
 }
 
 type Principal struct {
@@ -79,82 +78,31 @@ func PrincipalFrom(c *fiber.Ctx) (Principal, bool) {
 func Authentication(token contract.Token, sessions SessionValidator) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if token == nil || sessions == nil {
-			return writeError(c, errs.ErrUnauthorized)
+			return errs.ErrUnauthorized
 		}
 		raw, ok := strings.CutPrefix(c.Get(fiber.HeaderAuthorization), "Bearer ")
 		if !ok {
-			return writeError(c, errs.ErrUnauthorized)
+			return errs.ErrUnauthorized
 		}
 		claims, err := token.Verify(raw)
 		if err != nil {
-			return writeError(c, errs.ErrUnauthorized)
+			return errs.ErrUnauthorized
 		}
 		userID, _ := claims[claimUserID].(string)
 		tenantID, _ := claims[claimTenantID].(string)
 		role, _ := claims[claimRole].(string)
 		sessionID, _ := claims[claimSessionID].(string)
 		if userID == "" || tenantID == "" || sessionID == "" || !Role(role).Valid() {
-			return writeError(c, errs.ErrUnauthorized)
+			return errs.ErrUnauthorized
 		}
 		active, err := sessions.SessionActive(c.UserContext(), sessionID, userID, tenantID)
 		if err != nil {
-			return writeError(c, errs.Internal("could not verify authentication session"))
+			return errs.Internal("could not verify authentication session")
 		}
 		if !active {
-			return writeError(c, errs.ErrUnauthorized)
+			return errs.ErrUnauthorized
 		}
 		c.Locals(principalKey, Principal{UserID: userID, TenantID: tenantID, SessionID: sessionID, Role: Role(role)})
 		return c.Next()
 	}
-}
-
-type successResponse struct {
-	Data any `json:"data"`
-}
-
-type errorBody struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Details any    `json:"details"`
-}
-
-type errorResponse struct {
-	Error     errorBody `json:"error"`
-	RequestID string    `json:"requestId"`
-}
-
-func writeSuccess(c *fiber.Ctx, data any) error {
-	setRequestID(c)
-	return c.JSON(successResponse{Data: data})
-}
-
-func writeError(c *fiber.Ctx, err error) error {
-	setRequestID(c)
-	status, code, message, details := fiber.StatusInternalServerError, "INTERNAL_ERROR", "An unexpected error occurred.", any(nil)
-	if appErr, ok := errs.IsAppError(err); ok {
-		status, code, message = appErr.Status, appErr.Code, appErr.Message
-		if status >= fiber.StatusInternalServerError {
-			code, message = "INTERNAL_ERROR", "An unexpected error occurred."
-		}
-		if appErr.Code == "UNAUTHORIZED" {
-			message = "Authentication credentials are invalid."
-		}
-		if appErr.Code == "VALIDATION_ERROR" {
-			details = appErr.Data
-		}
-	} else {
-		slog.Error("auth request failed", "error", err, "path", c.Path())
-	}
-	return c.Status(status).JSON(errorResponse{
-		Error:     errorBody{Code: code, Message: message, Details: details},
-		RequestID: c.GetRespHeader(fiber.HeaderXRequestID),
-	})
-}
-
-func setRequestID(c *fiber.Ctx) {
-	id := strings.TrimSpace(c.Get(fiber.HeaderXRequestID))
-	if id == "" {
-		id = uuid.NewString()
-	}
-	c.Set(fiber.HeaderXRequestID, id)
 }

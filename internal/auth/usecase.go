@@ -6,13 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"net/http"
 	"net/mail"
 	"strings"
 	"time"
 
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/errs"
+	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -62,16 +62,16 @@ func NewAuthUsecase(repo AuthRepository, token contract.Token) AuthUsecase {
 
 func (u *authUsecase) Login(ctx context.Context, input Credentials) (*Session, error) {
 	email := strings.ToLower(strings.TrimSpace(input.Email))
-	var details []FieldError
+	var details []apierror.FieldError
 	parsedEmail, err := mail.ParseAddress(email)
 	if err != nil || parsedEmail.Address != email {
-		details = append(details, FieldError{Field: "email", Message: "A valid email is required."})
+		details = append(details, apierror.FieldError{Field: "email", Message: "A valid email is required."})
 	}
 	if strings.TrimSpace(input.Password) == "" {
-		details = append(details, FieldError{Field: "password", Message: "Password is required."})
+		details = append(details, apierror.FieldError{Field: "password", Message: "Password is required."})
 	}
 	if len(details) != 0 {
-		return nil, validationError(details)
+		return nil, apierror.Validation(details)
 	}
 	user, err := u.repo.FindActiveUserByEmail(ctx, email)
 	if err != nil {
@@ -85,7 +85,7 @@ func (u *authUsecase) Login(ctx context.Context, input Credentials) (*Session, e
 
 func (u *authUsecase) Refresh(ctx context.Context, input RefreshInput) (*Session, error) {
 	if strings.TrimSpace(input.RefreshToken) == "" {
-		return nil, validationError([]FieldError{{Field: "refreshToken", Message: "Refresh token is required."}})
+		return nil, apierror.Validation([]apierror.FieldError{{Field: "refreshToken", Message: "Refresh token is required."}})
 	}
 	oldHash := hashToken(input.RefreshToken)
 	now := time.Now().UTC()
@@ -110,7 +110,7 @@ func (u *authUsecase) Refresh(ctx context.Context, input RefreshInput) (*Session
 
 func (u *authUsecase) Logout(ctx context.Context, userID, sessionID string, input RefreshInput) error {
 	if strings.TrimSpace(input.RefreshToken) == "" {
-		return validationError([]FieldError{{Field: "refreshToken", Message: "Refresh token is required."}})
+		return apierror.Validation([]apierror.FieldError{{Field: "refreshToken", Message: "Refresh token is required."}})
 	}
 	if err := u.repo.RevokeSession(ctx, hashToken(input.RefreshToken), userID, sessionID, time.Now().UTC()); err != nil {
 		return normalizeAuthError(err)
@@ -155,17 +155,6 @@ func (u *authUsecase) session(user *User, sessionID, refreshToken string, includ
 		session.User = &AuthenticatedUser{ID: user.ID, Email: user.Email, Role: user.Role}
 	}
 	return session, nil
-}
-
-type FieldError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-}
-
-func validationError(details []FieldError) error {
-	err := errs.New(http.StatusUnprocessableEntity, "VALIDATION_ERROR", "The request is invalid.")
-	err.Data = details
-	return err
 }
 
 func normalizeAuthError(err error) error {

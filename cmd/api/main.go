@@ -17,6 +17,7 @@ import (
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/logger"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
+	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
 	"github.com/aifgrouplaos/candidate-api/pkg/ratelimit"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -138,6 +139,7 @@ func newApp(cfg *config.Config, trustedProxies []string, db contract.ORM, limite
 		TrustedProxies:          trustedProxies,
 		ProxyHeader:             "X-Forwarded-For",
 		EnableIPValidation:      true,
+		ErrorHandler:            httpresponse.Error,
 	})
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:  "http://localhost:3000,http://localhost:5173",

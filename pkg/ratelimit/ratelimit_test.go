@@ -41,8 +41,8 @@ func TestNew(t *testing.T) {
 				return c.SendStatus(appErr.Status)
 			}
 			buckets := func(*fiber.Ctx) []Bucket { return []Bucket{{Name: "test", Key: "k", Limit: 1, Window: time.Minute}} }
-			app := fiber.New()
-			app.Get("/", New(tc.store, buckets, fail), func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
+			app := fiber.New(fiber.Config{ErrorHandler: fail})
+			app.Get("/", New(tc.store, buckets), func(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusOK) })
 			response, err := app.Test(httptest.NewRequest(http.MethodGet, "/", nil))
 			if err != nil {
 				t.Fatal(err)

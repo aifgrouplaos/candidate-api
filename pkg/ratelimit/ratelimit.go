@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/BounkhongDev/bkgo/errs"
+	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -28,17 +29,17 @@ type Bucket struct {
 	Window time.Duration
 }
 
-// New checks every bucket returned for the request and passes errors to fail, which writes the response.
-func New(store Store, buckets func(*fiber.Ctx) []Bucket, fail func(*fiber.Ctx, error) error) fiber.Handler {
+// New rejects the request when any bucket returned for it is over its limit.
+func New(store Store, buckets func(*fiber.Ctx) []Bucket) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if store == nil {
-			return fail(c, errs.Internal("rate limit service is unavailable"))
+			return errs.Internal("rate limit service is unavailable")
 		}
 		for _, bucket := range buckets(c) {
 			exceeded, retry, err := store.Hit(c.UserContext(), bucketKey(bucket), bucket.Limit, bucket.Window)
 			if err != nil {
 				slog.Error("rate limit check failed", "error", err, "bucket", bucket.Name, "path", c.Path())
-				return fail(c, errs.Internal("rate limit service is unavailable"))
+				return errs.Internal("rate limit service is unavailable")
 			}
 			if exceeded {
 				retryAfter := int64(math.Ceil(retry.Seconds()))
@@ -46,7 +47,7 @@ func New(store Store, buckets func(*fiber.Ctx) []Bucket, fail func(*fiber.Ctx, e
 					retryAfter = 1
 				}
 				c.Set("Retry-After", strconv.FormatInt(retryAfter, 10))
-				return fail(c, errs.New(fiber.StatusTooManyRequests, "RATE_LIMITED", "Rate limit exceeded."))
+				return apierror.RateLimited
 			}
 		}
 		return c.Next()

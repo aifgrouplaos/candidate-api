@@ -11,6 +11,7 @@ import (
 	"github.com/BounkhongDev/bkgo/adapter/jwt"
 	"github.com/BounkhongDev/bkgo/config"
 	"github.com/BounkhongDev/bkgo/contract"
+	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
 	"github.com/gofiber/fiber/v2"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -26,7 +27,7 @@ func TestLoginEndpointContract(t *testing.T) {
 	}
 	token := jwt.New(config.JWT{Secret: "test-secret"})
 	handler := NewAuthHandler(NewAuthUsecase(repo, token))
-	app := fiber.New()
+	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})
 	pass := func(c *fiber.Ctx) error { return c.Next() }
 	handler.RegisterRoutes(app, pass, pass, Authentication(token, repo))
 
@@ -94,7 +95,7 @@ func TestLoginAccessTokenAuthenticatesLogout(t *testing.T) {
 		tokens: make(map[string]*RefreshToken), sessions: make(map[string]*AuthSession),
 	}
 	token := jwt.New(config.JWT{Secret: "test-secret"})
-	app := fiber.New()
+	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})
 	pass := func(c *fiber.Ctx) error { return c.Next() }
 	NewAuthHandler(NewAuthUsecase(repo, token)).RegisterRoutes(app, pass, pass, Authentication(token, repo))
 
@@ -128,7 +129,7 @@ func TestLoginAccessTokenAuthenticatesLogout(t *testing.T) {
 
 func TestAuthenticationRequiresValidIdentityTenantRoleAndExpiry(t *testing.T) {
 	token := jwt.New(config.JWT{Secret: "test-secret"})
-	app := fiber.New()
+	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})
 	repo := &memoryAuthRepository{
 		user:     &User{ID: "user-1", TenantID: "tenant-1", Active: true},
 		sessions: map[string]*AuthSession{"session-1": {ID: "session-1", UserID: "user-1", TenantID: "tenant-1"}},
