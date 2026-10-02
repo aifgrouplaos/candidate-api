@@ -129,7 +129,7 @@ Errors have this shape, and `requestId` matches the `X-Request-Id` response head
 | --- | --- | --- |
 | `GET /employees` | Admin | Paginated tenant Employee list. Query: `page`, `limit`, `search` (name/email/code), `departmentId`, comma-separated `status`, `sortBy` (`fullName`, `hireDate`, `createdAt`), `sortOrder` (`asc`, `desc`). |
 | `GET /employees/{id}` | Admin or that Employee | Reads an Employee in the caller's tenant; Employees may read only themselves. |
-| `POST /employees` | Admin | Creates an Employee and its login account atomically, plus that Employee's one-to-one chat conversation. The request includes Employee fields and `password`; the role is always `employee`. |
+| `POST /employees` | Admin | Creates an Employee and its login account atomically, plus that Employee's one-to-one chat conversation. The request includes Employee fields and `password`; the role is always `employee`. If the email belongs to a Deleted Employee in the same tenant, that Employee is restored instead: the create body replaces profile fields and the password, the previous avatar is kept, `version` increments, and the response is still `201` with the original `id`. |
 | `PATCH /employees/{id}` | Admin or that Employee | Admin may update `fullName`, `email`, `phone`, `departmentId`, `position`, `status`, and `hireDate`. An Employee may update only `fullName`, `phone`, and `avatarUrl`. Neither role may change `role` through this endpoint. Include the current `version`; a stale version returns `409 VERSION_CONFLICT`. |
 | `DELETE /employees/{id}` | Admin | Soft-deletes/disables the Employee login and retains the Employee record and chat history. Admin accounts cannot be deleted. |
 | `POST /employees/{id}/avatar` | Admin or that Employee | Uploads `multipart/form-data`, maximum 2 MB, JPG/PNG/WebP. The API validates content and authorization before writing to private RustFS. |
@@ -150,7 +150,7 @@ Errors have this shape, and `requestId` matches the `X-Request-Id` response head
 }
 ```
 
-Validation: `fullName` is required and 2–100 characters; email must be valid and globally unique; phone must be a valid phone number; `departmentId` must exist; `hireDate` cannot be in the future. Duplicate email returns `409`; field validation returns `422` with `details[]`. The tenant Employee limit is at most 200 login-enabled Employees.
+Validation: `fullName` is required and 2–100 characters; email must be valid and globally unique among Employees who are not a Deleted Employee in the caller's tenant; phone must be a valid phone number; `departmentId` must exist; `hireDate` cannot be in the future. A live email, or a Deleted Employee's email in another tenant, returns `409`; field validation returns `422` with `details[]`. The tenant Employee limit is at most 200 login-enabled Employees, and restoring a Deleted Employee counts toward that limit.
 
 ## 6. A2: Employee–Admin chat
 

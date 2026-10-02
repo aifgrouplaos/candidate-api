@@ -166,6 +166,13 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 	})
 
 	t.Run("delete disables login and revokes sessions", func(t *testing.T) {
+		avatar := "https://cdn.example/avatar.png"
+		position := "Old role"
+		first.AvatarURL = &avatar
+		first.Position = &position
+		if err := repo.Update(ctx, first, 1); err != nil {
+			t.Fatal(err)
+		}
 		authRepo := auth.NewAuthRepository(db)
 		session := &auth.AuthSession{ID: "99999999-9999-9999-9999-999999999999", UserID: *first.UserID, TenantID: tenantA}
 		if err := authRepo.CreateSession(ctx, session, &auth.RefreshToken{TokenHash: "h1", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
@@ -196,6 +203,63 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 		}
 		if err := repo.Delete(ctx, tenantA, first.ID, time.Now()); errorCode(err) != "NOT_FOUND" {
 			t.Fatalf("second delete: %v", err)
+		}
+	})
+
+	t.Run("create restores a deleted employee in the same tenant", func(t *testing.T) {
+		authRepo := auth.NewAuthRepository(db)
+		hireDate := time.Date(2020, 1, 2, 0, 0, 0, 0, time.UTC)
+		phone := "020555555"
+		incoming := &Employee{
+			TenantID: tenantA, FullName: "Somchai Restored", Email: "somchai@example.test",
+			Phone: &phone, DepartmentID: it, Status: StatusOnLeave, HireDate: &hireDate,
+		}
+		login := &auth.User{
+			TenantID: tenantA, Email: incoming.Email, PasswordHash: "new-hash",
+			Role: auth.RoleEmployee, FullName: incoming.FullName, Active: true,
+		}
+		if err := repo.Create(ctx, &Employee{TenantID: tenantB, FullName: "Taken", Email: incoming.Email, Status: StatusActive},
+			&auth.User{TenantID: tenantB, Email: incoming.Email, PasswordHash: "hash", Role: auth.RoleEmployee, FullName: "Taken", Active: true}, maxTenantLogins); errorCode(err) != "CONFLICT" {
+			t.Fatalf("other tenant took a deleted email: %v", err)
+		}
+		if err := repo.Create(ctx, incoming, login, 2); errorCode(err) != "CONFLICT" {
+			t.Fatalf("restore ignored the login limit: %v", err)
+		}
+		if err := repo.Create(ctx, incoming, login, maxTenantLogins); err != nil {
+			t.Fatal(err)
+		}
+		if incoming.ID != first.ID || incoming.EmployeeCode != "EMP-0001" {
+			t.Fatalf("restored identity = %s %s", incoming.ID, incoming.EmployeeCode)
+		}
+		restored, err := repo.FindByID(ctx, tenantA, first.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if restored.FullName != "Somchai Restored" || restored.Email != "somchai@example.test" || restored.Status != StatusOnLeave || restored.Version != 3 {
+			t.Fatalf("restored profile = %+v", restored)
+		}
+		if restored.Phone == nil || *restored.Phone != phone || restored.DepartmentID == nil || *restored.DepartmentID != *it || restored.Position != nil {
+			t.Fatalf("restored fields = %+v", restored)
+		}
+		if restored.HireDate == nil || restored.HireDate.Format(time.DateOnly) != "2020-01-02" {
+			t.Fatalf("hire date = %v", restored.HireDate)
+		}
+		if restored.AvatarURL == nil || *restored.AvatarURL != "https://cdn.example/avatar.png" || !restored.CreatedAt.Equal(first.CreatedAt) || !restored.UpdatedAt.After(restored.CreatedAt) {
+			t.Fatalf("retained fields = %+v", restored)
+		}
+		if _, err := authRepo.FindActiveUserByEmail(ctx, "somchai@example.test"); err != nil {
+			t.Fatalf("restored employee cannot log in: %v", err)
+		}
+		if active, err := authRepo.SessionActive(ctx, "99999999-9999-9999-9999-999999999999", *first.UserID, tenantA); err != nil || active {
+			t.Fatalf("revoked session was restored: %v %v", active, err)
+		}
+		var stored auth.User
+		if err := db.Session(ctx).First(&stored, "id = ?", *first.UserID).Error; err != nil || stored.PasswordHash != "new-hash" || stored.FullName != "Somchai Restored" || !stored.Active {
+			t.Fatalf("login not replaced: %+v %v", stored, err)
+		}
+		var rows int64
+		if err := db.Session(ctx).Unscoped().Model(&Employee{}).Where("LOWER(email) = ?", "somchai@example.test").Count(&rows).Error; err != nil || rows != 1 {
+			t.Fatalf("email rows = %d, err %v", rows, err)
 		}
 	})
 }

@@ -78,6 +78,8 @@ type EmployeeRepository interface {
 	DepartmentExists(ctx context.Context, id string) (bool, error)
 	// Create stores the login and Employee atomically, assigns EmployeeCode, and returns
 	// CONFLICT for a duplicate email or when the tenant already has maxLogins logins.
+	// A Deleted Employee in this tenant with the same email is restored: profile fields and
+	// password come from the request, while id, code, avatar, and created time stay.
 	Create(ctx context.Context, employee *Employee, login *auth.User, maxLogins int) error
 	// Update returns VERSION_CONFLICT unless the stored version equals expectedVersion.
 	Update(ctx context.Context, employee *Employee, expectedVersion int) error

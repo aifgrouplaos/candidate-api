@@ -101,6 +101,16 @@ func (r *employeeRepository) Create(ctx context.Context, employee *Employee, log
 		if logins >= int64(maxLogins) {
 			return errs.Conflict(fmt.Sprintf("The tenant already has the maximum of %d Employee logins.", maxLogins))
 		}
+		var deleted Employee
+		found := tx.Unscoped().
+			Where("tenant_id = ? AND LOWER(email) = LOWER(?) AND deleted_at IS NOT NULL", employee.TenantID, employee.Email).
+			First(&deleted).Error
+		if found == nil {
+			return restoreDeleted(tx, &deleted, employee, login)
+		}
+		if !errors.Is(found, gorm.ErrRecordNotFound) {
+			return found
+		}
 		var last int
 		if err := tx.Unscoped().Model(&Employee{}).
 			Where("tenant_id = ? AND employee_code ~ '^EMP-[0-9]+$'", employee.TenantID).
@@ -116,6 +126,37 @@ func (r *employeeRepository) Create(ctx context.Context, employee *Employee, log
 		return tx.Omit("Department").Create(employee).Error
 	})
 	return emailConflict(err)
+}
+
+// restoreDeleted brings a same-tenant Deleted Employee back and applies the create body.
+// Avatar, employee code, and created time stay; version increments; the login is reactivated.
+func restoreDeleted(tx *gorm.DB, deleted, employee *Employee, login *auth.User) error {
+	if deleted.UserID == nil {
+		if err := tx.Create(login).Error; err != nil {
+			return err
+		}
+		deleted.UserID = &login.ID
+	} else if err := tx.Model(&auth.User{}).Where(whereID, *deleted.UserID).Updates(map[string]any{
+		"email": login.Email, "full_name": employee.FullName, "password_hash": login.PasswordHash, "active": true,
+	}).Error; err != nil {
+		return err
+	}
+	result := tx.Unscoped().Model(&Employee{}).Where(whereID, deleted.ID).Updates(map[string]any{
+		"user_id": deleted.UserID, "full_name": employee.FullName, "email": employee.Email,
+		"phone": employee.Phone, "department_id": employee.DepartmentID, "position": employee.Position,
+		"status": employee.Status, "hire_date": employee.HireDate, "deleted_at": nil,
+		"version": gorm.Expr("version + 1"),
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	employee.ID = deleted.ID
+	employee.UserID = deleted.UserID
+	employee.EmployeeCode = deleted.EmployeeCode
+	employee.AvatarURL = deleted.AvatarURL
+	employee.Version = deleted.Version + 1
+	employee.CreatedAt = deleted.CreatedAt
+	return nil
 }
 
 func (r *employeeRepository) Update(ctx context.Context, employee *Employee, expectedVersion int) error {
