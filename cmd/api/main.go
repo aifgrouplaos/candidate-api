@@ -133,11 +133,19 @@ func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
 	return gormDB, nil
 }
 
+// skipRateLimits is only an explicit APP_ENV=development. bkgo turns a blank
+// APP_ENV into "development", and that default must still enforce the buckets.
+func skipRateLimits(env string) bool {
+	return env == "development" && os.Getenv("APP_ENV") == "development"
+}
+
+func allowRequest(c *fiber.Ctx) error { return c.Next() }
+
 func validateConfig(cfg *config.Config, trustedProxies []string) error {
 	if cfg.App.Env == "production" && (!cfg.PostgresEnabled || !cfg.JWTEnabled || len([]byte(cfg.JWT.Secret)) < 32 || !cfg.RedisEnabled || len(trustedProxies) == 0) {
 		return errors.New("production requires PostgreSQL, Redis, trusted proxy addresses, JWT, and a JWT secret of at least 32 bytes")
 	}
-	if cfg.PostgresEnabled && cfg.JWTEnabled && !cfg.RedisEnabled {
+	if !skipRateLimits(cfg.App.Env) && cfg.PostgresEnabled && cfg.JWTEnabled && !cfg.RedisEnabled {
 		return errors.New("Redis is required when authenticated API routes are enabled")
 	}
 	return nil
@@ -167,10 +175,17 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 	api := app.Group("/api/v1")
 	authRepository := auth.NewAuthRepository(db)
 	authMiddleware := auth.Authentication(token, authRepository)
-	protected := []fiber.Handler{authMiddleware, ratelimit.PerUser(limiter, auth.UserID)}
-	if db != nil && token != nil && limiter != nil {
+	if db != nil && token != nil && (skipRateLimits(cfg.App.Env) || limiter != nil) {
+		protected := []fiber.Handler{authMiddleware}
+		loginLimit := allowRequest
+		refreshLimit := allowRequest
+		if !skipRateLimits(cfg.App.Env) {
+			loginLimit = auth.LoginRateLimit(limiter)
+			refreshLimit = auth.RefreshRateLimit(limiter)
+			protected = append(protected, ratelimit.PerUser(limiter, auth.UserID))
+		}
 		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(authRepository, token))
-		authHandler.RegisterRoutes(api, auth.LoginRateLimit(limiter), auth.RefreshRateLimit(limiter), protected...)
+		authHandler.RegisterRoutes(api, loginLimit, refreshLimit, protected...)
 		employee.NewEmployeeHandler(employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db))).RegisterRoutes(api, protected...)
 	}
 	return app
