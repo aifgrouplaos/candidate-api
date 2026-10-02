@@ -300,7 +300,7 @@ func (u *employeeUsecase) UploadAvatar(ctx context.Context, actor auth.Principal
 	if u.files == nil {
 		return nil, errs.Internal("avatar storage is unavailable")
 	}
-	data, err := readAvatar(file)
+	data, err := readAvatar(ctx, file)
 	if err != nil {
 		return nil, err
 	}
@@ -310,22 +310,22 @@ func (u *employeeUsecase) UploadAvatar(ctx context.Context, actor auth.Principal
 	}
 	key := fmt.Sprintf("avatars/%s/%s/%s%s", employee.TenantID, employee.ID, uuid.NewString(), ext)
 	if _, err := u.files.Upload(ctx, u.bucket, key, bytes.NewReader(data), int64(len(data)), contentType); err != nil {
-		slog.Error("avatar upload failed", "error", err)
+		slog.Error("avatar upload failed", "error", err, "requestId", requestID(ctx))
 		return nil, errs.Internal("could not store the avatar")
 	}
 	previous := employee.AvatarURL
 	employee.AvatarURL = &key
 	if err := u.repo.Update(ctx, employee, employee.Version); err != nil {
 		if delErr := u.files.Delete(ctx, u.bucket, key); delErr != nil {
-			slog.Error("avatar cleanup failed", "error", delErr)
+			slog.Error("avatar cleanup failed", "error", delErr, "requestId", requestID(ctx))
 		}
 		return nil, err
 	}
-	if old, ok := avatarObjectKey(previous); ok && old != key {
+	if old, ok := avatarObjectKey(employee.TenantID, previous); ok && old != key {
 		// ponytail: a failed delete leaves the previous object in the private bucket.
 		// The Employee already points at the new key; the next replacement deletes this one.
 		if err := u.files.Delete(ctx, u.bucket, old); err != nil {
-			slog.Error("previous avatar delete failed", "error", err)
+			slog.Error("previous avatar delete failed", "error", err, "requestId", requestID(ctx))
 		}
 	}
 	return u.Get(ctx, actor, employee.ID)
@@ -385,7 +385,7 @@ func (u *employeeUsecase) department(ctx context.Context, v *validation, value *
 func (u *employeeUsecase) present(ctx context.Context, e *Employee) (*EmployeeView, error) {
 	result := view(e)
 	result.AvatarURL = nil
-	key, ok := avatarObjectKey(e.AvatarURL)
+	key, ok := avatarObjectKey(e.TenantID, e.AvatarURL)
 	if !ok {
 		return result, nil
 	}
@@ -394,7 +394,7 @@ func (u *employeeUsecase) present(ctx context.Context, e *Employee) (*EmployeeVi
 	}
 	url, err := u.files.URL(ctx, u.bucket, key, avatarURLExpiry)
 	if err != nil {
-		slog.Error("avatar url failed", "error", err)
+		slog.Error("avatar url failed", "error", err, "requestId", requestID(ctx))
 		return nil, errs.Internal("could not authorize the avatar download")
 	}
 	result.AvatarURL = &url
@@ -501,7 +501,7 @@ func (v *validation) hireDate(value *string) *time.Time {
 	return &date
 }
 
-func readAvatar(file AvatarFile) ([]byte, error) {
+func readAvatar(ctx context.Context, file AvatarFile) ([]byte, error) {
 	if file.Size > maxAvatarBytes {
 		return nil, avatarInvalid(msgAvatarSize)
 	}
@@ -510,7 +510,7 @@ func readAvatar(file AvatarFile) ([]byte, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(file.Body, maxAvatarBytes+1))
 	if err != nil {
-		slog.Error("avatar read failed", "error", err)
+		slog.Error("avatar read failed", "error", err, "requestId", requestID(ctx))
 		return nil, errs.Internal("could not read the avatar")
 	}
 	if len(data) > maxAvatarBytes {
@@ -523,13 +523,13 @@ func avatarInvalid(message string) error {
 	return apierror.Validation([]apierror.FieldError{{Field: "file", Message: message}})
 }
 
-// avatarObjectKey accepts only keys this API generated. A client-supplied URL is not an object.
-func avatarObjectKey(value *string) (string, bool) {
-	if value == nil {
+// avatarObjectKey accepts only keys this API generated for the Employee's tenant.
+func avatarObjectKey(tenantID string, value *string) (string, bool) {
+	if value == nil || tenantID == "" {
 		return "", false
 	}
 	key := *value
-	if !strings.HasPrefix(key, "avatars/") || strings.Contains(key, "..") || strings.Contains(key, `\`) {
+	if !strings.HasPrefix(key, "avatars/"+tenantID+"/") || strings.Contains(key, "..") || strings.Contains(key, `\`) {
 		return "", false
 	}
 	return key, true

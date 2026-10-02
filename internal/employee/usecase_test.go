@@ -655,6 +655,17 @@ func TestAvatarRetrievalRequiresAuthorization(t *testing.T) {
 	}
 }
 
+func TestAvatarKeyOutsideTenantIsNotPresigned(t *testing.T) {
+	repo := newMemoryRepository()
+	key := "avatars/" + tenantB + "/e1/other.jpg"
+	repo.employees["e1"].AvatarURL = &key
+	files := newMemoryStorage()
+	view, err := NewEmployeeUsecase(repo, files, avatarBucket).Get(context.Background(), adminA, "e1")
+	if err != nil || view.AvatarURL != nil || len(files.urlCalls) != 0 {
+		t.Fatalf("view %+v err %v calls %v", view, err, files.urlCalls)
+	}
+}
+
 func TestAvatarURLFailureDoesNotLeakObjectKey(t *testing.T) {
 	repo := newMemoryRepository()
 	key := "avatars/" + tenantA + "/e1/existing.jpg"

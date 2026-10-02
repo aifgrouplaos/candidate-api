@@ -1,10 +1,14 @@
 package employee
 
 import (
+	"context"
+	"strings"
+
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 )
 
 type EmployeeHandler struct {
@@ -31,7 +35,7 @@ func (h *EmployeeHandler) List(c *fiber.Ctx) error {
 	if err := c.QueryParser(&query); err != nil {
 		return errs.ErrBadRequest
 	}
-	result, meta, err := h.usecase.List(c.UserContext(), principal(c), query)
+	result, meta, err := h.usecase.List(requestContext(c), principal(c), query)
 	if err != nil {
 		return err
 	}
@@ -39,7 +43,7 @@ func (h *EmployeeHandler) List(c *fiber.Ctx) error {
 }
 
 func (h *EmployeeHandler) Get(c *fiber.Ctx) error {
-	result, err := h.usecase.Get(c.UserContext(), principal(c), c.Params("id"))
+	result, err := h.usecase.Get(requestContext(c), principal(c), c.Params("id"))
 	if err != nil {
 		return err
 	}
@@ -51,7 +55,7 @@ func (h *EmployeeHandler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return errs.ErrBadRequest
 	}
-	result, err := h.usecase.Create(c.UserContext(), principal(c), input)
+	result, err := h.usecase.Create(requestContext(c), principal(c), input)
 	if err != nil {
 		return err
 	}
@@ -63,7 +67,7 @@ func (h *EmployeeHandler) Update(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return errs.ErrBadRequest
 	}
-	result, err := h.usecase.Update(c.UserContext(), principal(c), c.Params("id"), input)
+	result, err := h.usecase.Update(requestContext(c), principal(c), c.Params("id"), input)
 	if err != nil {
 		return err
 	}
@@ -80,7 +84,7 @@ func (h *EmployeeHandler) UploadAvatar(c *fiber.Ctx) error {
 		return errs.ErrBadRequest
 	}
 	defer file.Close()
-	result, err := h.usecase.UploadAvatar(c.UserContext(), principal(c), c.Params("id"), AvatarFile{
+	result, err := h.usecase.UploadAvatar(requestContext(c), principal(c), c.Params("id"), AvatarFile{
 		ContentType: header.Header.Get("Content-Type"),
 		Size:        header.Size,
 		Body:        file,
@@ -92,18 +96,35 @@ func (h *EmployeeHandler) UploadAvatar(c *fiber.Ctx) error {
 }
 
 func (h *EmployeeHandler) Delete(c *fiber.Ctx) error {
-	if err := h.usecase.Delete(c.UserContext(), principal(c), c.Params("id")); err != nil {
+	if err := h.usecase.Delete(requestContext(c), principal(c), c.Params("id")); err != nil {
 		return err
 	}
 	return httpresponse.Success(c, nil)
 }
 
 func (h *EmployeeHandler) Departments(c *fiber.Ctx) error {
-	result, err := h.usecase.Departments(c.UserContext())
+	result, err := h.usecase.Departments(requestContext(c))
 	if err != nil {
 		return err
 	}
 	return httpresponse.Success(c, result)
+}
+
+type requestIDKey struct{}
+
+// requestContext keeps the response request ID and the ID written to security logs the same.
+func requestContext(c *fiber.Ctx) context.Context {
+	id := strings.TrimSpace(c.Get(fiber.HeaderXRequestID))
+	if id == "" {
+		id = uuid.NewString()
+		c.Request().Header.Set(fiber.HeaderXRequestID, id)
+	}
+	return context.WithValue(c.UserContext(), requestIDKey{}, id)
+}
+
+func requestID(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
 }
 
 // principal skips the presence check because routes are registered only behind
