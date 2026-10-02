@@ -17,7 +17,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const uniqueViolation = "23505"
+const (
+	uniqueViolation = "23505"
+	whereID         = "id = ?"
+)
 
 var (
 	errNotFound   = *errs.NotFound("Employee not found.")
@@ -81,7 +84,7 @@ func (r *employeeRepository) FindByID(ctx context.Context, tenantID, id string) 
 
 func (r *employeeRepository) DepartmentExists(ctx context.Context, id string) (bool, error) {
 	var count int64
-	err := r.db.Session(ctx).Model(&Department{}).Where("id = ?", id).Count(&count).Error
+	err := r.db.Session(ctx).Model(&Department{}).Where(whereID, id).Count(&count).Error
 	return count == 1, err
 }
 
@@ -133,7 +136,7 @@ func (r *employeeRepository) Update(ctx context.Context, employee *Employee, exp
 		if employee.UserID == nil {
 			return nil
 		}
-		return tx.Model(&auth.User{}).Where("id = ?", *employee.UserID).
+		return tx.Model(&auth.User{}).Where(whereID, *employee.UserID).
 			Updates(map[string]any{"email": employee.Email, "full_name": employee.FullName}).Error
 	})
 	return emailConflict(err)
@@ -159,7 +162,7 @@ func (r *employeeRepository) Delete(ctx context.Context, tenantID, id string, no
 			return nil
 		}
 		userID := *employee.UserID
-		if err := tx.Model(&auth.User{}).Where("id = ?", userID).Update("active", false).Error; err != nil {
+		if err := tx.Model(&auth.User{}).Where(whereID, userID).Update("active", false).Error; err != nil {
 			return err
 		}
 		if err := tx.Model(&auth.AuthSession{}).Where("user_id = ? AND revoked_at IS NULL", userID).Update("revoked_at", now).Error; err != nil {
