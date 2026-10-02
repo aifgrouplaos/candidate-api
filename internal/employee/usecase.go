@@ -131,18 +131,7 @@ func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query 
 		}
 		filter.DepartmentID = query.DepartmentID
 	}
-	for _, raw := range strings.Split(query.Status, ",") {
-		status := Status(strings.TrimSpace(raw))
-		if status == "" {
-			continue
-		}
-		if !status.Valid() {
-			v.add("status", msgStatus)
-			break
-		}
-		filter.Statuses = append(filter.Statuses, status)
-	}
-	filter.Statuses = utils.Unique(filter.Statuses)
+	filter.Statuses = v.statuses(query.Status)
 	switch query.SortBy {
 	case "", "createdAt":
 	case "fullName":
@@ -395,6 +384,23 @@ func (v *validation) status(value Status) Status {
 		v.add("status", msgStatus)
 	}
 	return value
+}
+
+// statuses parses a comma-separated status filter, reporting only the first invalid value.
+func (v *validation) statuses(value string) []Status {
+	var result []Status
+	for _, raw := range strings.Split(value, ",") {
+		status := Status(strings.TrimSpace(raw))
+		if status == "" {
+			continue
+		}
+		if !status.Valid() {
+			v.add("status", msgStatus)
+			break
+		}
+		result = append(result, status)
+	}
+	return utils.Unique(result)
 }
 
 func (v *validation) hireDate(value *string) *time.Time {
