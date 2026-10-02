@@ -18,6 +18,8 @@ import (
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/logger"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
+	"github.com/aifgrouplaos/candidate-api/internal/employee"
+	"github.com/aifgrouplaos/candidate-api/pkg/apidocs"
 	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
 	"github.com/aifgrouplaos/candidate-api/pkg/ratelimit"
 	"github.com/gofiber/fiber/v2"
@@ -120,9 +122,13 @@ func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("postgres connect failed: %w", err)
 	}
-	if err := gormDB.Raw().AutoMigrate(&auth.User{}, &auth.AuthSession{}, &auth.RefreshToken{}); err != nil {
+	if err := gormDB.Raw().AutoMigrate(&auth.User{}, &auth.AuthSession{}, &auth.RefreshToken{}, &employee.Department{}, &employee.Employee{}); err != nil {
 		gormDB.Close()
 		return nil, fmt.Errorf("automigrate failed: %w", err)
+	}
+	if err := employee.SeedDepartments(context.Background(), gormDB); err != nil {
+		gormDB.Close()
+		return nil, fmt.Errorf("department seed failed: %w", err)
 	}
 	return gormDB, nil
 }
@@ -156,6 +162,7 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "app": cfg.App.Name})
 	})
+	apidocs.Register(app)
 
 	api := app.Group("/api/v1")
 	authRepository := auth.NewAuthRepository(db)
@@ -164,11 +171,8 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 	if db != nil && token != nil && limiter != nil {
 		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(authRepository, token))
 		authHandler.RegisterRoutes(api, auth.LoginRateLimit(limiter), auth.RefreshRateLimit(limiter), protected...)
+		employee.NewEmployeeHandler(employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db))).RegisterRoutes(api, protected...)
 	}
-
-	// TODO: register module routes (repositories need DB_ENABLED=true)
-	// userHandler := user.NewUserHandler(user.NewUserUsecase(user.NewUserRepository(db)))
-	// userHandler.RegisterRoutes(api, protected...)
 	return app
 }
 

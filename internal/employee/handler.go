@@ -1,0 +1,92 @@
+package employee
+
+import (
+	"github.com/BounkhongDev/bkgo/errs"
+	"github.com/aifgrouplaos/candidate-api/internal/auth"
+	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
+	"github.com/gofiber/fiber/v2"
+)
+
+type EmployeeHandler struct {
+	usecase EmployeeUsecase
+}
+
+func NewEmployeeHandler(usecase EmployeeUsecase) *EmployeeHandler {
+	return &EmployeeHandler{usecase: usecase}
+}
+
+func (h *EmployeeHandler) RegisterRoutes(router fiber.Router, protected ...fiber.Handler) {
+	router.Get("/departments", append(protected, h.Departments)...)
+	employees := router.Group("/employees", protected...)
+	employees.Get("/", h.List)
+	employees.Post("/", h.Create)
+	employees.Get("/:id", h.Get)
+	employees.Patch("/:id", h.Update)
+	employees.Delete("/:id", h.Delete)
+}
+
+func (h *EmployeeHandler) List(c *fiber.Ctx) error {
+	var query ListQuery
+	if err := c.QueryParser(&query); err != nil {
+		return errs.ErrBadRequest
+	}
+	result, meta, err := h.usecase.List(c.UserContext(), principal(c), query)
+	if err != nil {
+		return err
+	}
+	return httpresponse.Page(c, result, meta)
+}
+
+func (h *EmployeeHandler) Get(c *fiber.Ctx) error {
+	result, err := h.usecase.Get(c.UserContext(), principal(c), c.Params("id"))
+	if err != nil {
+		return err
+	}
+	return httpresponse.Success(c, result)
+}
+
+func (h *EmployeeHandler) Create(c *fiber.Ctx) error {
+	var input CreateEmployeeInput
+	if err := c.BodyParser(&input); err != nil {
+		return errs.ErrBadRequest
+	}
+	result, err := h.usecase.Create(c.UserContext(), principal(c), input)
+	if err != nil {
+		return err
+	}
+	return httpresponse.Success(c.Status(fiber.StatusCreated), result)
+}
+
+func (h *EmployeeHandler) Update(c *fiber.Ctx) error {
+	var input UpdateEmployeeInput
+	if err := c.BodyParser(&input); err != nil {
+		return errs.ErrBadRequest
+	}
+	result, err := h.usecase.Update(c.UserContext(), principal(c), c.Params("id"), input)
+	if err != nil {
+		return err
+	}
+	return httpresponse.Success(c, result)
+}
+
+func (h *EmployeeHandler) Delete(c *fiber.Ctx) error {
+	if err := h.usecase.Delete(c.UserContext(), principal(c), c.Params("id")); err != nil {
+		return err
+	}
+	return httpresponse.Success(c, nil)
+}
+
+func (h *EmployeeHandler) Departments(c *fiber.Ctx) error {
+	result, err := h.usecase.Departments(c.UserContext())
+	if err != nil {
+		return err
+	}
+	return httpresponse.Success(c, result)
+}
+
+// principal skips the presence check because routes are registered only behind
+// auth.Authentication, and every Employee operation rejects a zero Principal's empty role.
+func principal(c *fiber.Ctx) auth.Principal {
+	p, _ := auth.PrincipalFrom(c)
+	return p
+}
