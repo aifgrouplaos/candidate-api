@@ -198,7 +198,7 @@ paths:
       tags: [Employees]
       operationId: updateEmployee
       summary: Update an Employee with optimistic concurrency
-      description: Employees may update only fullName, phone, and avatarUrl. The current version is required.
+      description: An Admin may update fullName, email, phone, departmentId, position, status, and hireDate. An Employee may update only fullName and phone. The current version is required.
       requestBody:
         required: true
         content:
@@ -215,7 +215,6 @@ paths:
                 position: { type: string }
                 status: { $ref: '#/components/schemas/EmployeeStatus' }
                 hireDate: { type: string, format: date }
-                avatarUrl: { type: [string, 'null'], format: uri }
       responses:
         '200':
           description: Updated Employee
