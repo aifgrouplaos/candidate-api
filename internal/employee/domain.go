@@ -43,11 +43,13 @@ type Employee struct {
 	Position     *string
 	Status       Status     `gorm:"not null;default:active"`
 	HireDate     *time.Time `gorm:"type:date"`
-	AvatarURL    *string
-	Version      int            `gorm:"not null;default:1"`
-	CreatedAt    time.Time      `gorm:"autoCreateTime"`
-	UpdatedAt    time.Time      `gorm:"autoUpdateTime"`
-	DeletedAt    gorm.DeletedAt `gorm:"index"`
+	// AvatarURL stores the private object key. Responses replace it with a
+	// short-lived presigned URL after the caller is authorized.
+	AvatarURL *string
+	Version   int            `gorm:"not null;default:1"`
+	CreatedAt time.Time      `gorm:"autoCreateTime"`
+	UpdatedAt time.Time      `gorm:"autoUpdateTime"`
+	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
 func (Employee) TableName() string { return "employees" }
