@@ -14,6 +14,10 @@ The privileged user account in a candidate tenant that manages its Employees and
 **Employee**:
 A user account in a candidate tenant representing an employee managed by that tenant's Admin.
 
+**Deleted Employee**:
+An Employee an Admin has removed from the tenant's active list. They remain that same Employee, with the same code and chat history and with login disabled, until that tenant's Admin creates an Employee with their email again.
+_Avoid_: removed user, archived employee
+
 **Authenticated session**:
 A single sign-in period that can be revoked independently. Disabling an account or resetting a candidate tenant revokes all affected sessions.
 

@@ -149,7 +149,7 @@ paths:
       tags: [Employees]
       operationId: createEmployee
       summary: Create an Employee login account and its conversation
-      description: Admin only. The role is always employee and tenant comes from authentication.
+      description: Admin only. The role is always employee and tenant comes from authentication. An email held by a Deleted Employee in the same tenant restores that Employee and still returns 201. A live email, or another tenant's email, returns 409.
       requestBody:
         required: true
         content:
