@@ -102,14 +102,14 @@ func (r *employeeRepository) Create(ctx context.Context, employee *Employee, log
 			return errs.Conflict(fmt.Sprintf("The tenant already has the maximum of %d Employee logins.", maxLogins))
 		}
 		var deleted Employee
-		found := tx.Unscoped().
+		deletedErr := tx.Unscoped().
 			Where("tenant_id = ? AND LOWER(email) = LOWER(?) AND deleted_at IS NOT NULL", employee.TenantID, employee.Email).
 			First(&deleted).Error
-		if found == nil {
+		if deletedErr == nil {
 			return restoreDeleted(tx, &deleted, employee, login)
 		}
-		if !errors.Is(found, gorm.ErrRecordNotFound) {
-			return found
+		if !errors.Is(deletedErr, gorm.ErrRecordNotFound) {
+			return deletedErr
 		}
 		var last int
 		if err := tx.Unscoped().Model(&Employee{}).
@@ -132,11 +132,9 @@ func (r *employeeRepository) Create(ctx context.Context, employee *Employee, log
 // Avatar, employee code, and created time stay; version increments; the login is reactivated.
 func restoreDeleted(tx *gorm.DB, deleted, employee *Employee, login *auth.User) error {
 	if deleted.UserID == nil {
-		if err := tx.Create(login).Error; err != nil {
-			return err
-		}
-		deleted.UserID = &login.ID
-	} else if err := tx.Model(&auth.User{}).Where(whereID, *deleted.UserID).Updates(map[string]any{
+		return errEmailTaken
+	}
+	if err := tx.Model(&auth.User{}).Where(whereID, *deleted.UserID).Updates(map[string]any{
 		"email": login.Email, "full_name": employee.FullName, "password_hash": login.PasswordHash, "active": true,
 	}).Error; err != nil {
 		return err
