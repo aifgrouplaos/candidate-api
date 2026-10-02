@@ -22,6 +22,7 @@ func (h *EmployeeHandler) RegisterRoutes(router fiber.Router, protected ...fiber
 	employees.Post("/", h.Create)
 	employees.Get("/:id", h.Get)
 	employees.Patch("/:id", h.Update)
+	employees.Post("/:id/avatar", h.UploadAvatar)
 	employees.Delete("/:id", h.Delete)
 }
 
@@ -63,6 +64,27 @@ func (h *EmployeeHandler) Update(c *fiber.Ctx) error {
 		return errs.ErrBadRequest
 	}
 	result, err := h.usecase.Update(c.UserContext(), principal(c), c.Params("id"), input)
+	if err != nil {
+		return err
+	}
+	return httpresponse.Success(c, result)
+}
+
+func (h *EmployeeHandler) UploadAvatar(c *fiber.Ctx) error {
+	header, err := c.FormFile("file")
+	if err != nil {
+		return errs.ErrBadRequest
+	}
+	file, err := header.Open()
+	if err != nil {
+		return errs.ErrBadRequest
+	}
+	defer file.Close()
+	result, err := h.usecase.UploadAvatar(c.UserContext(), principal(c), c.Params("id"), AvatarFile{
+		ContentType: header.Header.Get("Content-Type"),
+		Size:        header.Size,
+		Body:        file,
+	})
 	if err != nil {
 		return err
 	}

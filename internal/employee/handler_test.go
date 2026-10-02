@@ -1,11 +1,14 @@
 package employee
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +30,7 @@ func (activeSessions) SessionActive(context.Context, string, string, string) (bo
 func TestEmployeeRoutesContract(t *testing.T) {
 	token := jwt.New(config.JWT{Secret: "test-secret"})
 	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})
-	NewEmployeeHandler(NewEmployeeUsecase(newMemoryRepository())).RegisterRoutes(app, auth.Authentication(token, activeSessions{}))
+	NewEmployeeHandler(NewEmployeeUsecase(newMemoryRepository(), nil, "")).RegisterRoutes(app, auth.Authentication(token, activeSessions{}))
 	bearer := func(p auth.Principal) string {
 		value, err := token.Sign(contract.Claims{"sub": p.UserID, "tenantId": p.TenantID, "role": string(p.Role), "sid": "s1"}, time.Minute)
 		if err != nil {
@@ -78,5 +81,103 @@ func TestEmployeeRoutesContract(t *testing.T) {
 	}
 	if status, body = call(http.MethodGet, "/departments", bearer(employeeA), ""); status != http.StatusOK || !strings.Contains(string(body["data"]), `"name":"IT"`) {
 		t.Errorf("departments = %d %s", status, body["data"])
+	}
+}
+
+func TestUploadAvatarRoute(t *testing.T) {
+	token := jwt.New(config.JWT{Secret: "test-secret"})
+	repo := newMemoryRepository()
+	files := newMemoryStorage()
+	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})
+	NewEmployeeHandler(NewEmployeeUsecase(repo, files, avatarBucket)).RegisterRoutes(app, auth.Authentication(token, activeSessions{}))
+	bearer := func(p auth.Principal) string {
+		value, err := token.Sign(contract.Claims{"sub": p.UserID, "tenantId": p.TenantID, "role": string(p.Role), "sid": "s1"}, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return "Bearer " + value
+	}
+	send := func(authorization, contentType string, data []byte) (int, map[string]json.RawMessage) {
+		t.Helper()
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		header := textproto.MIMEHeader{}
+		header.Set("Content-Disposition", `form-data; name="file"; filename="avatar.bin"`)
+		header.Set("Content-Type", contentType)
+		part, err := writer.CreatePart(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(data); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/employees/e1/avatar", &body)
+		request.Header.Set("Content-Type", writer.FormDataContentType())
+		request.Header.Set("Authorization", authorization)
+		response, err := app.Test(request, -1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		raw, _ := io.ReadAll(response.Body)
+		var decoded map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatalf("invalid JSON %s", raw)
+		}
+		return response.StatusCode, decoded
+	}
+
+	if status, _ := send("", "image/jpeg", imageBytes(16, jpegMagic)); status != http.StatusUnauthorized {
+		t.Fatalf("anonymous = %d", status)
+	}
+	status, body := send(bearer(employeeA), "image/jpeg", imageBytes(16, jpegMagic))
+	if status != http.StatusOK || !strings.Contains(string(body["data"]), `"avatarUrl":"https://files.example.test/`) || strings.Contains(string(body["data"]), `"avatarUrl":"avatars/`) {
+		t.Fatalf("upload = %d %s", status, body["data"])
+	}
+	if status, body = send(bearer(employeeA), "image/gif", []byte("GIF89a")); status != http.StatusUnprocessableEntity || !strings.Contains(string(body["error"]), `"file"`) {
+		t.Fatalf("gif = %d %s", status, body["error"])
+	}
+	request := httptest.NewRequest(http.MethodPost, "/employees/e1/avatar", strings.NewReader(`{"file":"nope"}`))
+	request.Header.Set("Content-Type", fiber.MIMEApplicationJSON)
+	request.Header.Set("Authorization", bearer(employeeA))
+	response, err := app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing file = %d", response.StatusCode)
+	}
+	var otherBody bytes.Buffer
+	writer := multipart.NewWriter(&otherBody)
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition", `form-data; name="file"; filename="avatar.bin"`)
+	header.Set("Content-Type", "image/png")
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(imageBytes(16, pngMagic)); err != nil {
+		t.Fatal(err)
+	}
+	writer.Close()
+	other := httptest.NewRequest(http.MethodPost, "/employees/e2/avatar", &otherBody)
+	other.Header.Set("Content-Type", writer.FormDataContentType())
+	other.Header.Set("Authorization", bearer(employeeA))
+	response, err = app.Test(other, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("other employee = %d %s", response.StatusCode, raw)
+	}
+	files.failUpload = true
+	if status, body = send(bearer(adminA), "image/png", imageBytes(16, pngMagic)); status != http.StatusInternalServerError || strings.Contains(string(body["error"]), "storage") {
+		t.Fatalf("storage failure = %d %s", status, body["error"])
 	}
 }
