@@ -8,7 +8,7 @@ The repository contains the assessment materials and an initialized Go API scaff
 
 ## Run locally
 
-Requires Go 1.22+ and Docker Compose. The scaffold uses Fiber and PostgreSQL; PostgreSQL is enabled by default. Redis is required when authentication routes are enabled, except `APP_ENV=development`, which skips rate limits. MinIO and JWT remain optional for local development.
+Requires Go 1.22+ and Docker Compose. The scaffold uses Fiber and PostgreSQL; PostgreSQL is enabled by default. Redis is required when authentication routes are enabled, except an explicit `APP_ENV=development`, which skips rate limits. MinIO and JWT remain optional for local development.
 
 ```sh
 cp .env.example .env

@@ -133,10 +133,10 @@ func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
 	return gormDB, nil
 }
 
-// skipRateLimits is only the local development process. Every other APP_ENV,
-// including production, keeps the API_SPEC buckets and the Redis requirement.
+// skipRateLimits is only an explicit APP_ENV=development. bkgo turns a blank
+// APP_ENV into "development", and that default must still enforce the buckets.
 func skipRateLimits(env string) bool {
-	return env == "development"
+	return env == "development" && os.Getenv("APP_ENV") == "development"
 }
 
 func allowRequest(c *fiber.Ctx) error { return c.Next() }

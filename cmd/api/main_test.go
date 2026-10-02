@@ -34,6 +34,7 @@ func (rejectStore) Hit(context.Context, string, int64, time.Duration) (bool, tim
 }
 
 func TestDevelopmentRegistersAuthRoutesWithoutLimiter(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
 	cfg := &config.Config{App: config.App{Env: "development"}, PostgresEnabled: true, JWTEnabled: true}
 	app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
@@ -64,6 +65,7 @@ func TestDevelopmentRegistersAuthRoutesWithoutLimiter(t *testing.T) {
 func TestDevelopmentDoesNotRateLimitAuthRoutes(t *testing.T) {
 	for _, env := range []string{"development", "production"} {
 		t.Run(env, func(t *testing.T) {
+			t.Setenv("APP_ENV", env)
 			cfg := &config.Config{App: config.App{Env: env}, PostgresEnabled: true, JWTEnabled: true}
 			app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{})
 			for _, path := range []string{"/api/v1/auth/login", "/api/v1/auth/refresh"} {
@@ -86,7 +88,32 @@ func TestDevelopmentDoesNotRateLimitAuthRoutes(t *testing.T) {
 	}
 }
 
+func TestUnsetAppEnvKeepsRateLimits(t *testing.T) {
+	t.Setenv("APP_ENV", "")
+	cfg := &config.Config{
+		App:             config.App{Env: "development"},
+		PostgresEnabled: true,
+		JWTEnabled:      true,
+		JWT:             config.JWT{Secret: strings.Repeat("k", 32)},
+	}
+	if err := validateConfig(cfg, nil); err == nil {
+		t.Fatal("blank APP_ENV was treated as development and allowed to start without Redis")
+	}
+	app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("blank APP_ENV login: got %d, want %d", res.StatusCode, http.StatusTooManyRequests)
+	}
+}
+
 func TestDevelopmentAllowsAuthenticatedRoutesWithoutRedis(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
 	secret := strings.Repeat("k", 32)
 	cfg := &config.Config{
 		App:             config.App{Env: "development"},
