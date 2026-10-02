@@ -1,6 +1,113 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/BounkhongDev/bkgo/config"
+	"github.com/BounkhongDev/bkgo/contract"
+	"gorm.io/gorm"
+)
+
+type stubORM struct{}
+
+func (stubORM) Session(context.Context) *gorm.DB                        { return nil }
+func (stubORM) Transaction(context.Context, func(*gorm.DB) error) error { return nil }
+func (stubORM) Close() error                                            { return nil }
+
+type stubToken struct{}
+
+func (stubToken) Sign(contract.Claims, time.Duration) (string, error) {
+	return "", nil
+}
+func (stubToken) Verify(string) (contract.Claims, error) { return nil, context.Canceled }
+
+// rejectStore exceeds every bucket, so a mounted limit responds 429 before the handler.
+type rejectStore struct{}
+
+func (rejectStore) Hit(context.Context, string, int64, time.Duration) (bool, time.Duration, error) {
+	return true, time.Second, nil
+}
+
+func TestDevelopmentRegistersAuthRoutesWithoutLimiter(t *testing.T) {
+	cfg := &config.Config{App: config.App{Env: "development"}, PostgresEnabled: true, JWTEnabled: true}
+	app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("development without a limiter: got %d, want %d", res.StatusCode, http.StatusBadRequest)
+	}
+
+	cfg.App.Env = "staging"
+	app = newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
+	req.Header.Set("Content-Type", "application/json")
+	res, err = app.Test(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("staging without a limiter: got %d, want %d", res.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestDevelopmentDoesNotRateLimitAuthRoutes(t *testing.T) {
+	for _, env := range []string{"development", "production"} {
+		t.Run(env, func(t *testing.T) {
+			cfg := &config.Config{App: config.App{Env: env}, PostgresEnabled: true, JWTEnabled: true}
+			app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{})
+			for _, path := range []string{"/api/v1/auth/login", "/api/v1/auth/refresh"} {
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{"))
+				req.Header.Set("Content-Type", "application/json")
+				res, err := app.Test(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				res.Body.Close()
+				want := http.StatusBadRequest
+				if env != "development" {
+					want = http.StatusTooManyRequests
+				}
+				if res.StatusCode != want {
+					t.Fatalf("%s %s: got %d, want %d", env, path, res.StatusCode, want)
+				}
+			}
+		})
+	}
+}
+
+func TestDevelopmentAllowsAuthenticatedRoutesWithoutRedis(t *testing.T) {
+	secret := strings.Repeat("k", 32)
+	cfg := &config.Config{
+		App:             config.App{Env: "development"},
+		PostgresEnabled: true,
+		JWTEnabled:      true,
+		JWT:             config.JWT{Secret: secret},
+	}
+	if err := validateConfig(cfg, nil); err != nil {
+		t.Fatalf("development without Redis: %v", err)
+	}
+	for _, env := range []string{"", "dev", "local", "staging", "production"} {
+		cfg.App.Env = env
+		proxies := []string(nil)
+		if env == "production" {
+			proxies = []string{"10.0.0.1"}
+		}
+		if err := validateConfig(cfg, proxies); err == nil {
+			t.Fatalf("%q without Redis was accepted", env)
+		}
+	}
+}
 
 func TestParseAllowedOrigins(t *testing.T) {
 	for value, want := range map[string]string{
