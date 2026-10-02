@@ -22,7 +22,7 @@ const (
 	maxTenantLogins = 200
 	defaultLimit    = 20
 	maxLimit        = 100
-	maxPage         = 1_000_000
+	maxPage         = 10_000
 	msgStatus       = "Status must be active, inactive, or on_leave."
 )
 
