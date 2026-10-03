@@ -15,7 +15,7 @@ import (
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 	"gorm.io/gorm"
 )
 
@@ -34,7 +34,7 @@ func main() {
 
 func run(input io.Reader, output io.Writer) error {
 	stdin, ok := input.(*os.File)
-	if !ok || !terminal.IsTerminal(int(stdin.Fd())) {
+	if !ok || !term.IsTerminal(int(stdin.Fd())) {
 		return errors.New("create-admin requires an interactive terminal for password entry")
 	}
 
@@ -127,7 +127,7 @@ func promptLine(reader *bufio.Reader, output io.Writer, label string) (string, e
 
 func promptPassword(stdin *os.File, output io.Writer, label string) ([]byte, error) {
 	fmt.Fprint(output, label)
-	password, err := terminal.ReadPassword(int(stdin.Fd()))
+	password, err := term.ReadPassword(int(stdin.Fd()))
 	fmt.Fprintln(output)
 	if err != nil {
 		return nil, fmt.Errorf("could not read password: %w", err)
