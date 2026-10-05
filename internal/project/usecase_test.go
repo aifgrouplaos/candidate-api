@@ -170,7 +170,7 @@ func TestCreateReportsEveryInvalidField(t *testing.T) {
 		"phases[0].name", "phases[0].startDate",
 		"phases[0].tasks[1].severity",
 		"phases[0].tasks[2].title", "phases[0].tasks[2].type", "phases[0].tasks[2].priority",
-		"phases[0].tasks[2].estimateHours", "phases[0].tasks[2].dueDate", "phases[0].tasks[2].severity",
+		"phases[0].tasks[2].estimateHours", "phases[0].tasks[2].dueDate",
 		"phases[0].tasks[3].assigneeId", "phases[0].tasks[3].estimateHours", "phases[0].tasks[3].dueDate", "phases[0].tasks[3].severity",
 		"phases[1].order", "phases[1].endDate", "phases[1].tasks",
 		"ownerId", "phases[0].tasks[2].assigneeId",

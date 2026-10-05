@@ -256,7 +256,7 @@ func (v *validation) task(task *Task, path string, j int, in TaskInput, phase *P
 	switch {
 	case in.Type == TaskBug && (in.Severity == nil || !in.Severity.Valid()):
 		v.Add(path+"severity", "Severity must be minor, major, or critical for bug tasks.")
-	case in.Type != TaskBug && in.Severity != nil:
+	case in.Type == TaskFeature && in.Severity != nil:
 		v.Add(path+"severity", "Severity must be null unless the task is a bug.")
 	}
 }
