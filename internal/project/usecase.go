@@ -61,12 +61,6 @@ type TaskInput struct {
 	Severity      *Severity `json:"severity"`
 }
 
-type ListQuery struct {
-	Page   int    `query:"page"`
-	Limit  int    `query:"limit"`
-	Search string `query:"search"`
-}
-
 // ProjectSummary is a list item; GET /projects/{id} returns the Phases and Tasks.
 type ProjectSummary struct {
 	ID          string    `json:"id"`
@@ -111,7 +105,7 @@ type ProjectUsecase interface {
 	// with the same payload returns the original Project.
 	Create(ctx context.Context, actor auth.Principal, idempotencyKey string, input CreateProjectInput) (*ProjectView, error)
 	Get(ctx context.Context, actor auth.Principal, id string) (*ProjectView, error)
-	List(ctx context.Context, actor auth.Principal, query ListQuery) ([]*ProjectSummary, pagination.Meta, error)
+	List(ctx context.Context, actor auth.Principal, query pagination.Query) ([]*ProjectSummary, pagination.Meta, error)
 	Delete(ctx context.Context, actor auth.Principal, id string) error
 }
 
@@ -175,20 +169,16 @@ func (u *projectUsecase) Get(ctx context.Context, actor auth.Principal, id strin
 }
 
 // List, like Get, shows every Project in the tenant to any authenticated user.
-func (u *projectUsecase) List(ctx context.Context, actor auth.Principal, query ListQuery) ([]*ProjectSummary, pagination.Meta, error) {
+func (u *projectUsecase) List(ctx context.Context, actor auth.Principal, query pagination.Query) ([]*ProjectSummary, pagination.Meta, error) {
 	if !actor.Role.Valid() || actor.TenantID == "" {
 		return nil, pagination.Meta{}, errForbidden
 	}
 	var v validation
-	filter := ListFilter{TenantID: actor.TenantID, Search: strings.TrimSpace(query.Search)}
-	v.Length("search", filter.Search, 0, 100, "Search must be at most 100 characters.")
-	if query.Page > pagination.MaxPage {
-		v.Add("page", "Page is too large.")
-	}
+	filter := ListFilter{TenantID: actor.TenantID, Search: query.Check(&v.FieldErrors)}
 	if err := v.Err(); err != nil {
 		return nil, pagination.Meta{}, err
 	}
-	page, limit, offset := pagination.Bounds(query.Page, query.Limit)
+	page, limit, offset := query.Bounds()
 	filter.Offset, filter.Limit = offset, limit
 
 	projects, total, err := u.repo.List(ctx, filter)

@@ -6,6 +6,7 @@ import (
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
+	"github.com/aifgrouplaos/candidate-api/pkg/pagination"
 	"github.com/gofiber/fiber/v2"
 )
 
@@ -29,7 +30,7 @@ func (h *ProjectHandler) RegisterRoutes(router fiber.Router, protected ...fiber.
 }
 
 func (h *ProjectHandler) List(c *fiber.Ctx) error {
-	var query ListQuery
+	var query pagination.Query
 	if err := c.QueryParser(&query); err != nil {
 		return errs.ErrBadRequest
 	}

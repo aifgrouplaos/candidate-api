@@ -10,6 +10,7 @@ import (
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
+	"github.com/aifgrouplaos/candidate-api/pkg/pagination"
 )
 
 const (
@@ -345,7 +346,7 @@ func TestListIsTenantScopedAndPaged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, meta, err := u.List(ctx, employeeA, ListQuery{Page: 2, Limit: 2, Search: "  HR  "})
+	got, meta, err := u.List(ctx, employeeA, pagination.Query{Page: 2, Limit: 2, Search: "  HR  "})
 	if err != nil || len(got) != 1 || got[0].OwnerID != ownerA || got[0].StartDate != "2026-11-01" {
 		t.Fatalf("list = %+v, err %v", got, err)
 	}
@@ -355,16 +356,16 @@ func TestListIsTenantScopedAndPaged(t *testing.T) {
 	if meta.Page != 2 || meta.Limit != 2 || meta.Total != 3 || meta.TotalPages != 2 {
 		t.Fatalf("meta = %+v", meta)
 	}
-	if _, meta, _ := u.List(ctx, adminB, ListQuery{Limit: 500}); meta.Total != 1 || meta.Limit != 100 || meta.Page != 1 {
+	if _, meta, _ := u.List(ctx, adminB, pagination.Query{Limit: 500}); meta.Total != 1 || meta.Limit != 100 || meta.Page != 1 {
 		t.Fatalf("other tenant meta = %+v", meta)
 	}
-	if _, _, err := u.List(ctx, auth.Principal{}, ListQuery{}); errorCode(err) != "FORBIDDEN" {
+	if _, _, err := u.List(ctx, auth.Principal{}, pagination.Query{}); errorCode(err) != "FORBIDDEN" {
 		t.Fatalf("zero principal: %v", err)
 	}
 }
 
 func TestListValidatesQuery(t *testing.T) {
-	query := ListQuery{Search: strings.Repeat("x", 101), Page: 10_001}
+	query := pagination.Query{Search: strings.Repeat("x", 101), Page: 10_001}
 	_, _, err := NewProjectUsecase(newMemoryRepository()).List(context.Background(), adminA, query)
 	if got := detailFields(t, err); !reflect.DeepEqual(got, []string{"search", "page"}) {
 		t.Fatalf("fields = %v", got)

@@ -9,7 +9,7 @@ func TestBoundsAndMeta(t *testing.T) {
 		{3, 10, 3, 10, 20},
 		{2, 500, 2, MaxLimit, MaxLimit},
 	} {
-		page, limit, offset := Bounds(c.page, c.limit)
+		page, limit, offset := Query{Page: c.page, Limit: c.limit}.Bounds()
 		if page != c.wantPage || limit != c.wantLimit || offset != c.wantOffset {
 			t.Errorf("Bounds(%d, %d) = %d, %d, %d", c.page, c.limit, page, limit, offset)
 		}

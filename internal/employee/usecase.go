@@ -77,9 +77,7 @@ type UpdateEmployeeInput struct {
 }
 
 type ListQuery struct {
-	Page         int    `query:"page"`
-	Limit        int    `query:"limit"`
-	Search       string `query:"search"`
+	pagination.Query
 	DepartmentID string `query:"departmentId"`
 	Status       string `query:"status"`
 	SortBy       string `query:"sortBy"`
@@ -134,8 +132,7 @@ func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query 
 		return nil, pagination.Meta{}, errForbidden
 	}
 	var v validation
-	filter := ListFilter{TenantID: actor.TenantID, Search: strings.TrimSpace(query.Search), SortBy: SortCreatedAt}
-	v.Length("search", filter.Search, 0, 100, "Search must be at most 100 characters.")
+	filter := ListFilter{TenantID: actor.TenantID, Search: query.Check(&v.FieldErrors), SortBy: SortCreatedAt}
 	if query.DepartmentID != "" {
 		if _, err := uuid.Parse(query.DepartmentID); err != nil {
 			v.Add("departmentId", "Department ID is invalid.")
@@ -159,13 +156,10 @@ func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query 
 	default:
 		v.Add("sortOrder", "Sort order must be asc or desc.")
 	}
-	if query.Page > pagination.MaxPage {
-		v.Add("page", "Page is too large.")
-	}
 	if err := v.Err(); err != nil {
 		return nil, pagination.Meta{}, err
 	}
-	page, limit, offset := pagination.Bounds(query.Page, query.Limit)
+	page, limit, offset := query.Bounds()
 	filter.Offset, filter.Limit = offset, limit
 
 	employees, total, err := u.repo.List(ctx, filter)
