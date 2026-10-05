@@ -57,6 +57,9 @@ type MessageFilter struct {
 
 var errCursorNotFound = errors.New("cursor message not found")
 
+// AvatarURL presigns an Employee's stored avatar key for an authorized reader.
+type AvatarURL func(ctx context.Context, tenantID string, key *string) (*string, error)
+
 type ChatRepository interface {
 	// List returns one page of the conversations reader may access, most recently updated
 	// first, plus the total number of matches. Admins see their tenant's conversations and
@@ -65,6 +68,7 @@ type ChatRepository interface {
 	// FindByID returns NOT_FOUND unless reader may access the conversation.
 	FindByID(ctx context.Context, reader auth.Principal, id string) (*Conversation, error)
 	// Messages returns messages in ascending Sequence with their Sender. It returns
-	// errCursorNotFound when a cursor is not a message in the conversation.
+	// errCursorNotFound when a cursor is not a message in the conversation. It does not
+	// authorize; callers must load the conversation through FindByID first.
 	Messages(ctx context.Context, filter MessageFilter) ([]*Message, error)
 }

@@ -200,7 +200,7 @@ func TestMessagesCursorPages(t *testing.T) {
 		{"oldest page", MessageQuery{Limit: 2, Before: "m3"}, "m1,m2", `{"hasMoreBefore":false,"hasMoreAfter":true,"nextBefore":null}`},
 		{"newer page", MessageQuery{Limit: 2, After: "m1"}, "m2,m3", `{"hasMoreBefore":true,"hasMoreAfter":true,"nextBefore":"m2"}`},
 		{"caught up", MessageQuery{Limit: 2, After: "m3"}, "m4,m5", `{"hasMoreBefore":true,"hasMoreAfter":false,"nextBefore":"m4"}`},
-		{"nothing newer", MessageQuery{After: "m5"}, "", `{"hasMoreBefore":true,"hasMoreAfter":false,"nextBefore":null}`},
+		{"nothing newer", MessageQuery{After: "m5"}, "", `{"hasMoreBefore":true,"hasMoreAfter":false,"nextBefore":"m5"}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

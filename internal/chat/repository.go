@@ -30,6 +30,8 @@ func ProvisionConversation(tx *gorm.DB, tenantID, employeeID string) error {
 }
 
 // BackfillConversations provisions conversations for Employee logins created before chat existed.
+// ponytail: runs at every startup and scans all Employee logins; move it to a one-off
+// migration if startup time or the employees table grows beyond test-tenant size.
 func BackfillConversations(ctx context.Context, db contract.ORM) error {
 	return db.Session(ctx).Exec(`INSERT INTO conversations (tenant_id, employee_id, created_at, updated_at)
 		SELECT tenant_id, id, now(), now() FROM employees WHERE user_id IS NOT NULL

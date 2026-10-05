@@ -14,13 +14,10 @@ import (
 const (
 	defaultMessageLimit = 30
 	maxMessageLimit     = 100
-	msgSent             = "sent"
+	statusSent          = "sent"
 )
 
 var errForbidden = *errs.Forbidden("You do not have permission to perform this action.")
-
-// AvatarURL presigns an Employee's stored avatar key for an authorized reader.
-type AvatarURL func(ctx context.Context, tenantID string, key *string) (*string, error)
 
 type ListQuery struct {
 	pagination.Query
@@ -126,7 +123,7 @@ func (u *chatUsecase) Open(ctx context.Context, reader auth.Principal) (*Convers
 		return nil, err
 	}
 	if len(conversations) == 0 {
-		return nil, errs.NotFound("Conversation not found.")
+		return nil, errNotFound
 	}
 	return u.present(ctx, conversations[0])
 }
@@ -176,6 +173,8 @@ func (u *chatUsecase) Messages(ctx context.Context, reader auth.Principal, id st
 	}
 	if meta.HasMoreBefore && len(messages) > 0 {
 		meta.NextBefore = &messages[0].ID
+	} else if meta.HasMoreBefore {
+		meta.NextBefore = &query.After
 	}
 	views := make([]*MessageView, len(messages))
 	for i, message := range messages {
@@ -210,7 +209,7 @@ func messageView(m *Message) *MessageView {
 	// ponytail: every stored message reports "sent" until delivery and read positions exist.
 	return &MessageView{
 		ID: m.ID, ClientMessageID: m.ClientMessageID, ConversationID: m.ConversationID, Sequence: m.Sequence,
-		Sender: sender, Text: m.Text, Status: msgSent, CreatedAt: m.CreatedAt.UTC(),
+		Sender: sender, Text: m.Text, Status: statusSent, CreatedAt: m.CreatedAt.UTC(),
 	}
 }
 
