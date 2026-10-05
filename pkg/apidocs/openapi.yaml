@@ -462,6 +462,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ConversationPage' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
     post:
       tags: [Chat]
       operationId: ensureConversation
@@ -510,6 +511,10 @@ paths:
       tags: [Chat]
       operationId: listMessages
       summary: Read messages in ascending conversation order
+      description: >-
+        Without a cursor, returns the newest messages. Send at most one of `before` and `after`;
+        a cursor must be a message ID in this conversation. An empty history returns `data: []`
+        with both `hasMore` flags false and `nextBefore: null`.
       parameters:
         - name: limit
           in: query
@@ -533,6 +538,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
     post:
       tags: [Chat]
       operationId: sendMessage

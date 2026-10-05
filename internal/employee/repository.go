@@ -31,11 +31,16 @@ var (
 var defaultDepartments = []string{"IT", "Human Resources", "Finance", "Marketing", "Operations"}
 
 type employeeRepository struct {
-	db contract.ORM
+	db        contract.ORM
+	provision Provision
 }
 
-func NewEmployeeRepository(db contract.ORM) EmployeeRepository {
-	return &employeeRepository{db: db}
+// NewEmployeeRepository runs provision for every created or restored Employee; nil skips it.
+func NewEmployeeRepository(db contract.ORM, provision Provision) EmployeeRepository {
+	if provision == nil {
+		provision = func(*gorm.DB, string, string) error { return nil }
+	}
+	return &employeeRepository{db: db, provision: provision}
 }
 
 // SeedDepartments inserts defaultDepartments, keeping any that already exist.
@@ -106,7 +111,10 @@ func (r *employeeRepository) Create(ctx context.Context, employee *Employee, log
 			Where("tenant_id = ? AND LOWER(email) = LOWER(?) AND deleted_at IS NOT NULL", employee.TenantID, employee.Email).
 			First(&deleted).Error
 		if deletedErr == nil {
-			return restoreDeleted(tx, &deleted, employee, login)
+			if err := restoreDeleted(tx, &deleted, employee, login); err != nil {
+				return err
+			}
+			return r.provision(tx, employee.TenantID, employee.ID)
 		}
 		if !errors.Is(deletedErr, gorm.ErrRecordNotFound) {
 			return deletedErr
@@ -123,7 +131,10 @@ func (r *employeeRepository) Create(ctx context.Context, employee *Employee, log
 		employee.UserID = &login.ID
 		employee.EmployeeCode = fmt.Sprintf("EMP-%04d", last+1)
 		employee.Version = 1
-		return tx.Omit("Department").Create(employee).Error
+		if err := tx.Omit("Department").Create(employee).Error; err != nil {
+			return err
+		}
+		return r.provision(tx, employee.TenantID, employee.ID)
 	})
 	return emailConflict(err)
 }

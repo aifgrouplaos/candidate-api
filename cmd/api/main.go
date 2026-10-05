@@ -18,6 +18,7 @@ import (
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/logger"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
+	"github.com/aifgrouplaos/candidate-api/internal/chat"
 	"github.com/aifgrouplaos/candidate-api/internal/employee"
 	"github.com/aifgrouplaos/candidate-api/internal/project"
 	"github.com/aifgrouplaos/candidate-api/pkg/apidocs"
@@ -123,7 +124,7 @@ func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
 		return nil, fmt.Errorf("postgres connect failed: %w", err)
 	}
 	if err := gormDB.Raw().AutoMigrate(&auth.User{}, &auth.AuthSession{}, &auth.RefreshToken{}, &employee.Department{}, &employee.Employee{},
-		&project.Project{}, &project.Phase{}, &project.Task{}); err != nil {
+		&project.Project{}, &project.Phase{}, &project.Task{}, &chat.Conversation{}, &chat.Message{}); err != nil {
 		gormDB.Close()
 		return nil, fmt.Errorf("automigrate failed: %w", err)
 	}
@@ -187,8 +188,10 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 		}
 		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(authRepository, token))
 		authHandler.RegisterRoutes(api, loginLimit, refreshLimit, protected...)
-		employee.NewEmployeeHandler(employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db), store, cfg.MinIO.Bucket)).RegisterRoutes(api, protected...)
+		employees := employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db, chat.ProvisionConversation), store, cfg.MinIO.Bucket)
+		employee.NewEmployeeHandler(employees).RegisterRoutes(api, protected...)
 		project.NewProjectHandler(project.NewProjectUsecase(project.NewProjectRepository(db))).RegisterRoutes(api, protected...)
+		chat.NewChatHandler(chat.NewChatUsecase(chat.NewChatRepository(db), employees.AvatarURL)).RegisterRoutes(api, protected...)
 	}
 	return app
 }
