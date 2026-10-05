@@ -17,6 +17,8 @@ import (
 
 var errNotFound = *errs.NotFound("Conversation not found.")
 
+const whereID = "id = ?"
+
 // unreadMessage matches messages m of conversations that the reader whose user ID is
 // bound to ? has not read; only the other participant's messages count.
 const unreadMessage = "m.conversation_id = conversations.id AND m.sender_id <> ? AND m.read_at IS NULL"
@@ -133,7 +135,7 @@ func (r *chatRepository) Send(ctx context.Context, m *Message) (*Message, error)
 	err := r.db.Transaction(ctx, func(tx *gorm.DB) error {
 		// Locking the conversation serializes its sends, so sequences have no gaps or
 		// duplicates and a concurrent retry finds the first attempt's message.
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&Conversation{}, "id = ?", m.ConversationID).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&Conversation{}, whereID, m.ConversationID).Error; err != nil {
 			return err
 		}
 		var existing []string
@@ -153,13 +155,13 @@ func (r *chatRepository) Send(ctx context.Context, m *Message) (*Message, error)
 			return err
 		}
 		id = m.ID
-		return tx.Model(&Conversation{}).Where("id = ?", m.ConversationID).Update("updated_at", m.CreatedAt).Error
+		return tx.Model(&Conversation{}).Where(whereID, m.ConversationID).Update("updated_at", m.CreatedAt).Error
 	})
 	if err != nil {
 		return nil, err
 	}
 	var stored Message
-	return &stored, r.db.Session(ctx).Preload("Sender").First(&stored, "id = ?", id).Error
+	return &stored, r.db.Session(ctx).Preload("Sender").First(&stored, whereID, id).Error
 }
 
 func (r *chatRepository) MarkRead(ctx context.Context, reader auth.Principal, conversationID, messageID string) error {
