@@ -24,14 +24,16 @@ func (activeSessions) SessionActive(context.Context, string, string, string) (bo
 	return true, nil
 }
 
-func TestChatRoutesContract(t *testing.T) {
+type chatClient func(method, path string, actor *auth.Principal, body string) (int, map[string]json.RawMessage)
+
+// newChatClient serves the chat routes over a repository holding three Employee messages.
+func newChatClient(t *testing.T) chatClient {
 	token := jwt.New(config.JWT{Secret: "test-secret"})
 	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})
 	NewChatHandler(NewChatUsecase(newRepositoryWithMessages(3), signAvatar)).RegisterRoutes(app, auth.Authentication(token, activeSessions{}))
-
-	do := func(method, path string, actor *auth.Principal, body ...string) (int, map[string]json.RawMessage) {
+	return func(method, path string, actor *auth.Principal, body string) (int, map[string]json.RawMessage) {
 		t.Helper()
-		request := httptest.NewRequest(method, path, strings.NewReader(strings.Join(body, "")))
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 		if actor != nil {
 			bearer, err := token.Sign(contract.Claims{"sub": actor.UserID, "tenantId": actor.TenantID, "role": string(actor.Role), "sid": "s1"}, time.Minute)
@@ -52,7 +54,10 @@ func TestChatRoutesContract(t *testing.T) {
 		}
 		return response.StatusCode, decoded
 	}
+}
 
+func TestChatRoutesContract(t *testing.T) {
+	do := newChatClient(t)
 	cases := []struct {
 		method, path string
 		actor        *auth.Principal
@@ -71,7 +76,7 @@ func TestChatRoutesContract(t *testing.T) {
 		{http.MethodGet, "/chat/conversations/c1/messages?before=m3&after=m1", &adminA, fiber.StatusUnprocessableEntity, []string{"error", "requestId"}},
 	}
 	for _, tc := range cases {
-		status, body := do(tc.method, tc.path, tc.actor)
+		status, body := do(tc.method, tc.path, tc.actor, "")
 		if status != tc.status || len(body) != len(tc.keys) {
 			t.Fatalf("%s %s: %d %v", tc.method, tc.path, status, body)
 		}
@@ -82,11 +87,15 @@ func TestChatRoutesContract(t *testing.T) {
 		}
 	}
 
-	_, page := do(http.MethodGet, "/chat/conversations/c1/messages?limit=2&before=m3", &adminA)
+	_, page := do(http.MethodGet, "/chat/conversations/c1/messages?limit=2&before=m3", &adminA, "")
 	if string(page["meta"]) != `{"hasMoreBefore":false,"hasMoreAfter":true,"nextBefore":null}` {
 		t.Fatalf("messages meta = %s", page["meta"])
 	}
+}
 
+// TestChatWriteRoutesContract runs in order: each case sees the state earlier cases left.
+func TestChatWriteRoutesContract(t *testing.T) {
+	do := newChatClient(t)
 	send := `{"clientMessageId":"8f14e45f-ceea-467f-a8f1-6d1b8c2a0001","text":"Hello"}`
 	writes := []struct {
 		method, path, body string
