@@ -179,7 +179,7 @@ func (u *projectUsecase) build(ctx context.Context, tenantID string, input Creat
 		TenantID:    tenantID,
 		Name:        strings.TrimSpace(input.Name),
 		Code:        strings.TrimSpace(input.Code),
-		Description: optional(input.Description),
+		Description: utils.Optional(input.Description),
 	}
 	v.Length("name", project.Name, 3, 100, "Name must be 3–100 characters.")
 	v.Length("code", project.Code, 1, 50, "Code is required and must be at most 50 characters.")
@@ -358,16 +358,4 @@ func (v *validation) within(field string, date, start, end time.Time, message st
 	if date.Before(start) || date.After(end) {
 		v.Add(field, message)
 	}
-}
-
-// optional trims a nullable string and treats blank as null.
-func optional(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	trimmed := strings.TrimSpace(*value)
-	if trimmed == "" {
-		return nil
-	}
-	return &trimmed
 }

@@ -362,7 +362,7 @@ func (u *employeeUsecase) find(ctx context.Context, actor auth.Principal, id str
 }
 
 func (u *employeeUsecase) department(ctx context.Context, v *validation, value *string) (*string, error) {
-	value = optional(value)
+	value = utils.Optional(value)
 	if value == nil {
 		return nil, nil
 	}
@@ -432,7 +432,7 @@ func (v *validation) email(value string) string {
 }
 
 func (v *validation) phone(value *string) *string {
-	value = optional(value)
+	value = utils.Optional(value)
 	if value != nil && !phonePattern.MatchString(*value) {
 		v.Add("phone", "A valid phone number is required.")
 	}
@@ -440,7 +440,7 @@ func (v *validation) phone(value *string) *string {
 }
 
 func (v *validation) position(value *string) *string {
-	value = optional(value)
+	value = utils.Optional(value)
 	if value != nil {
 		v.Length("position", *value, 0, 100, "Position must be at most 100 characters.")
 	}
@@ -472,7 +472,7 @@ func (v *validation) statuses(value string) []Status {
 }
 
 func (v *validation) hireDate(value *string) *time.Time {
-	value = optional(value)
+	value = utils.Optional(value)
 	if value == nil {
 		return nil
 	}
@@ -544,16 +544,4 @@ func avatarType(declared string, data []byte) (contentType, ext string, ok bool)
 		return "", "", false
 	}
 	return contentType, ext, true
-}
-
-// optional trims a nullable string and treats blank as null.
-func optional(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	trimmed := strings.TrimSpace(*value)
-	if trimmed == "" {
-		return nil
-	}
-	return &trimmed
 }
