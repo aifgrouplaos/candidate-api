@@ -14,6 +14,7 @@ import (
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
+	"github.com/aifgrouplaos/candidate-api/pkg/utils"
 	"github.com/google/uuid"
 )
 
@@ -26,6 +27,7 @@ const (
 	msgNoEmployee    = "Employee not found."
 	msgDate          = "Date must be a YYYY-MM-DD date."
 	msgEndBeforeDate = "End date must be on or after the start date."
+	msgPhaseDates    = "Phase dates must be within the Project dates."
 )
 
 var errForbidden = *errs.Forbidden("You do not have permission to perform this action.")
@@ -112,7 +114,7 @@ func (u *projectUsecase) Create(ctx context.Context, actor auth.Principal, idemp
 		return nil, errForbidden
 	}
 	idempotencyKey = strings.TrimSpace(idempotencyKey)
-	if idempotencyKey == "" || len(idempotencyKey) > maxKeyLength {
+	if idempotencyKey == "" || utf8.RuneCountInString(idempotencyKey) > maxKeyLength {
 		return nil, errs.BadRequest("The Idempotency-Key header is required and must be at most 255 characters.")
 	}
 	payload, err := json.Marshal(input)
@@ -207,8 +209,8 @@ func (u *projectUsecase) build(ctx context.Context, tenantID string, input Creat
 			orders[phase.Order] = true
 		}
 		phase.StartDate, phase.EndDate = v.dates(path, in.StartDate, in.EndDate)
-		v.within(path+"startDate", phase.StartDate, project.StartDate, project.EndDate, "Phase dates must be within the Project dates.")
-		v.within(path+"endDate", phase.EndDate, project.StartDate, project.EndDate, "Phase dates must be within the Project dates.")
+		v.within(path+"startDate", phase.StartDate, project.StartDate, project.EndDate, msgPhaseDates)
+		v.within(path+"endDate", phase.EndDate, project.StartDate, project.EndDate, msgPhaseDates)
 		if n := len(in.Tasks); n < 1 || n > maxTasksPerPhase {
 			v.add(path+"tasks", fmt.Sprintf("A Phase must have 1–%d tasks.", maxTasksPerPhase))
 		}
@@ -258,15 +260,11 @@ func (u *projectUsecase) checkEmployees(ctx context.Context, v *validation, tena
 	if len(v.refs) == 0 {
 		return nil
 	}
-	ids := make([]string, 0, len(v.refs))
-	seen := map[string]bool{}
-	for _, ref := range v.refs {
-		if !seen[ref.id] {
-			seen[ref.id] = true
-			ids = append(ids, ref.id)
-		}
+	ids := make([]string, len(v.refs))
+	for i, ref := range v.refs {
+		ids[i] = ref.id
 	}
-	active, err := u.repo.ActiveEmployeeIDs(ctx, tenantID, ids)
+	active, err := u.repo.ActiveEmployeeIDs(ctx, tenantID, utils.Unique(ids))
 	if err != nil {
 		return err
 	}

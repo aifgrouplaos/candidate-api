@@ -326,7 +326,8 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          schema: { type: string, format: uuid, maxLength: 255 }
+          description: Any unique string, such as a UUID.
+          schema: { type: string, minLength: 1, maxLength: 255 }
       requestBody:
         required: true
         content:
