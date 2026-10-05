@@ -195,63 +195,70 @@ func (u *projectUsecase) build(ctx context.Context, tenantID string, input Creat
 	orders := map[int]bool{}
 	project.Phases = make([]Phase, len(input.Phases))
 	for i, in := range input.Phases {
-		path := fmt.Sprintf("phases[%d].", i)
-		phase := &project.Phases[i]
-		phase.Position = i
-		phase.Name = strings.TrimSpace(in.Name)
-		v.length(path+"name", phase.Name, 1, 100, "Name is required and must be at most 100 characters.")
-		switch {
-		case in.Order == nil || *in.Order < 1 || *in.Order > maxOrder:
-			v.add(path+"order", fmt.Sprintf("Order must be 1–%d.", maxOrder))
-		case orders[*in.Order]:
-			v.add(path+"order", "Order must be unique within the Project.")
-		default:
-			phase.Order = *in.Order
-			orders[phase.Order] = true
-		}
-		phase.StartDate, phase.EndDate = v.dates(path, in.StartDate, in.EndDate)
-		v.within(path+"startDate", phase.StartDate, project.StartDate, project.EndDate, msgPhaseDates)
-		v.within(path+"endDate", phase.EndDate, project.StartDate, project.EndDate, msgPhaseDates)
-		if n := len(in.Tasks); n < 1 || n > maxTasksPerPhase {
-			v.add(path+"tasks", fmt.Sprintf("A Phase must have 1–%d tasks.", maxTasksPerPhase))
-		}
-
-		phase.Tasks = make([]Task, len(in.Tasks))
-		for j, in := range in.Tasks {
-			path := fmt.Sprintf("%stasks[%d].", path, j)
-			task := &phase.Tasks[j]
-			task.Position = j
-			task.Title = strings.TrimSpace(in.Title)
-			v.length(path+"title", task.Title, 1, 200, "Title is required and must be at most 200 characters.")
-			task.Type, task.Priority = in.Type, in.Priority
-			if !in.Type.Valid() {
-				v.add(path+"type", "Type must be feature or bug.")
-			}
-			if !in.Priority.Valid() {
-				v.add(path+"priority", "Priority must be low, medium, high, or critical.")
-			}
-			task.AssigneeID = v.employee(path+"assigneeId", in.AssigneeID)
-			if in.EstimateHours == nil || *in.EstimateHours <= 0 || *in.EstimateHours > maxEstimateHours {
-				v.add(path+"estimateHours", "Estimate hours must be greater than 0 and at most 999.")
-			} else {
-				task.EstimateHours = *in.EstimateHours
-			}
-			task.DueDate = v.date(path+"dueDate", in.DueDate)
-			v.within(path+"dueDate", task.DueDate, phase.StartDate, phase.EndDate, "Due date must be within the Phase dates.")
-			task.Severity = in.Severity
-			switch {
-			case in.Type == TaskBug && (in.Severity == nil || !in.Severity.Valid()):
-				v.add(path+"severity", "Severity must be minor, major, or critical for bug tasks.")
-			case in.Type != TaskBug && in.Severity != nil:
-				v.add(path+"severity", "Severity must be null unless the task is a bug.")
-			}
-		}
+		v.phase(&project.Phases[i], i, in, project, orders)
 	}
 
 	if err := u.checkEmployees(ctx, &v, tenantID); err != nil {
 		return nil, err
 	}
 	return project, v.err()
+}
+
+// phase validates the Phase at index i and its Tasks; orders tracks Orders already used in the Project.
+func (v *validation) phase(phase *Phase, i int, in PhaseInput, project *Project, orders map[int]bool) {
+	path := fmt.Sprintf("phases[%d].", i)
+	phase.Position = i
+	phase.Name = strings.TrimSpace(in.Name)
+	v.length(path+"name", phase.Name, 1, 100, "Name is required and must be at most 100 characters.")
+	switch {
+	case in.Order == nil || *in.Order < 1 || *in.Order > maxOrder:
+		v.add(path+"order", fmt.Sprintf("Order must be 1–%d.", maxOrder))
+	case orders[*in.Order]:
+		v.add(path+"order", "Order must be unique within the Project.")
+	default:
+		phase.Order = *in.Order
+		orders[phase.Order] = true
+	}
+	phase.StartDate, phase.EndDate = v.dates(path, in.StartDate, in.EndDate)
+	v.within(path+"startDate", phase.StartDate, project.StartDate, project.EndDate, msgPhaseDates)
+	v.within(path+"endDate", phase.EndDate, project.StartDate, project.EndDate, msgPhaseDates)
+	if n := len(in.Tasks); n < 1 || n > maxTasksPerPhase {
+		v.add(path+"tasks", fmt.Sprintf("A Phase must have 1–%d tasks.", maxTasksPerPhase))
+	}
+
+	phase.Tasks = make([]Task, len(in.Tasks))
+	for j, task := range in.Tasks {
+		v.task(&phase.Tasks[j], fmt.Sprintf("%stasks[%d].", path, j), j, task, phase)
+	}
+}
+
+// task validates the Task at index j, whose fields are reported under path.
+func (v *validation) task(task *Task, path string, j int, in TaskInput, phase *Phase) {
+	task.Position = j
+	task.Title = strings.TrimSpace(in.Title)
+	v.length(path+"title", task.Title, 1, 200, "Title is required and must be at most 200 characters.")
+	task.Type, task.Priority = in.Type, in.Priority
+	if !in.Type.Valid() {
+		v.add(path+"type", "Type must be feature or bug.")
+	}
+	if !in.Priority.Valid() {
+		v.add(path+"priority", "Priority must be low, medium, high, or critical.")
+	}
+	task.AssigneeID = v.employee(path+"assigneeId", in.AssigneeID)
+	if in.EstimateHours == nil || *in.EstimateHours <= 0 || *in.EstimateHours > maxEstimateHours {
+		v.add(path+"estimateHours", "Estimate hours must be greater than 0 and at most 999.")
+	} else {
+		task.EstimateHours = *in.EstimateHours
+	}
+	task.DueDate = v.date(path+"dueDate", in.DueDate)
+	v.within(path+"dueDate", task.DueDate, phase.StartDate, phase.EndDate, "Due date must be within the Phase dates.")
+	task.Severity = in.Severity
+	switch {
+	case in.Type == TaskBug && (in.Severity == nil || !in.Severity.Valid()):
+		v.add(path+"severity", "Severity must be minor, major, or critical for bug tasks.")
+	case in.Type != TaskBug && in.Severity != nil:
+		v.add(path+"severity", "Severity must be null unless the task is a bug.")
+	}
 }
 
 // checkEmployees reports every referenced Employee that is not active in the tenant.
