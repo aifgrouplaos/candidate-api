@@ -86,112 +86,128 @@ func rowCounts(t *testing.T, db *gormadapter.DB) [3]int64 {
 	return counts
 }
 
+type repoFixture struct {
+	db      *gormadapter.DB
+	repo    ProjectRepository
+	ctx     context.Context
+	project *Project
+}
+
 func TestRepositoryAgainstPostgres(t *testing.T) {
 	db := newTestDB(t)
-	repo := NewProjectRepository(db)
-	ctx := context.Background()
+	f := &repoFixture{db: db, repo: NewProjectRepository(db), ctx: context.Background()}
 	seedEmployee(t, db, ownerA, tenantA, employee.StatusActive, false)
 	seedEmployee(t, db, assigneeA, tenantA, employee.StatusActive, true)
 	seedEmployee(t, db, inactiveA, tenantA, employee.StatusOnLeave, false)
 	seedEmployee(t, db, employeeB, tenantB, employee.StatusActive, false)
 
-	t.Run("active employees exclude deleted, inactive, and other tenants", func(t *testing.T) {
-		active, err := repo.ActiveEmployeeIDs(ctx, tenantA, []string{ownerA, assigneeA, inactiveA, employeeB})
-		if err != nil || len(active) != 1 || !active[ownerA] {
-			t.Fatalf("active = %v, err %v", active, err)
-		}
-	})
+	t.Run("active employees exclude deleted, inactive, and other tenants", f.testActiveEmployees)
 
-	project := storedProject("PRJ-1", "k1", 5, 100)
-	if err := repo.Create(ctx, project); err != nil {
+	f.project = storedProject("PRJ-1", "k1", 5, 100)
+	if err := f.repo.Create(f.ctx, f.project); err != nil {
 		t.Fatal(err)
 	}
 
-	t.Run("reads back 500 tasks in submitted order", func(t *testing.T) {
-		got, err := repo.FindByID(ctx, tenantA, project.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got.Version != 1 || len(got.Phases) != 5 || got.Phases[0].Order != 5 || got.Phases[4].Name != "Phase 4" {
-			t.Fatalf("project = %+v", got)
-		}
-		tasks := got.Phases[4].Tasks
-		if len(tasks) != 100 || tasks[99].Title != "Task 4.99" || tasks[0].ID == "" || *tasks[0].Severity != SeverityMinor || !tasks[0].DueDate.Equal(project.Phases[0].Tasks[0].DueDate) {
-			t.Fatalf("tasks = %d, last %+v", len(tasks), tasks[len(tasks)-1])
-		}
-	})
+	t.Run("reads back 500 tasks in submitted order", f.testReadBackOrder)
+	t.Run("other tenants and malformed IDs are not found", f.testNotFound)
+	t.Run("finds the project by key per tenant", f.testFindByKey)
+	t.Run("reused key stores nothing", f.testReusedKey)
+	t.Run("duplicate code conflicts only within the tenant", f.testDuplicateCode)
+	t.Run("a failing task rolls back the whole submission", f.testRollback)
+	t.Run("concurrent submissions with one key create one project", f.testConcurrentKey)
+}
 
-	t.Run("other tenants and malformed IDs are not found", func(t *testing.T) {
-		for _, c := range []struct{ tenant, id string }{{tenantB, project.ID}, {tenantA, "not-a-uuid"}, {tenantA, employeeB}} {
-			if _, err := repo.FindByID(ctx, c.tenant, c.id); errorCode(err) != "NOT_FOUND" {
-				t.Fatalf("%v: %v", c, err)
-			}
-		}
-	})
+func (f *repoFixture) testActiveEmployees(t *testing.T) {
+	active, err := f.repo.ActiveEmployeeIDs(f.ctx, tenantA, []string{ownerA, assigneeA, inactiveA, employeeB})
+	if err != nil || len(active) != 1 || !active[ownerA] {
+		t.Fatalf("active = %v, err %v", active, err)
+	}
+}
 
-	t.Run("finds the project by key per tenant", func(t *testing.T) {
-		found, err := repo.FindByIdempotencyKey(ctx, tenantA, "k1")
-		if err != nil || found == nil || found.ID != project.ID || found.RequestHash != "h" || len(found.Phases[4].Tasks) != 100 {
-			t.Fatalf("found = %+v, err %v", found, err)
-		}
-		if found, err := repo.FindByIdempotencyKey(ctx, tenantB, "k1"); found != nil || err != nil {
-			t.Fatalf("other tenant = %+v, err %v", found, err)
-		}
-	})
+func (f *repoFixture) testReadBackOrder(t *testing.T) {
+	got, err := f.repo.FindByID(f.ctx, tenantA, f.project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Version != 1 || len(got.Phases) != 5 || got.Phases[0].Order != 5 || got.Phases[4].Name != "Phase 4" {
+		t.Fatalf("project = %+v", got)
+	}
+	tasks := got.Phases[4].Tasks
+	if len(tasks) != 100 || tasks[99].Title != "Task 4.99" || tasks[0].ID == "" || *tasks[0].Severity != SeverityMinor || !tasks[0].DueDate.Equal(f.project.Phases[0].Tasks[0].DueDate) {
+		t.Fatalf("tasks = %d, last %+v", len(tasks), tasks[len(tasks)-1])
+	}
+}
 
-	t.Run("reused key stores nothing", func(t *testing.T) {
-		before := rowCounts(t, db)
-		err := repo.Create(ctx, storedProject("PRJ-2", "k1", 1, 1))
-		if !errors.Is(err, errKeyUsed) || rowCounts(t, db) != before {
-			t.Fatalf("err %v, counts %v -> %v", err, before, rowCounts(t, db))
+func (f *repoFixture) testNotFound(t *testing.T) {
+	for _, c := range []struct{ tenant, id string }{{tenantB, f.project.ID}, {tenantA, "not-a-uuid"}, {tenantA, employeeB}} {
+		if _, err := f.repo.FindByID(f.ctx, c.tenant, c.id); errorCode(err) != "NOT_FOUND" {
+			t.Fatalf("%v: %v", c, err)
 		}
-	})
+	}
+}
 
-	t.Run("duplicate code conflicts only within the tenant", func(t *testing.T) {
-		err := repo.Create(ctx, storedProject("PRJ-1", "k2", 1, 1))
-		if errorCode(err) != "CONFLICT" {
-			t.Fatalf("same tenant: %v", err)
-		}
-		other := storedProject("PRJ-1", "k2", 1, 1)
-		other.TenantID = tenantB
-		if err := repo.Create(ctx, other); err != nil {
-			t.Fatalf("other tenant: %v", err)
-		}
-	})
+func (f *repoFixture) testFindByKey(t *testing.T) {
+	found, err := f.repo.FindByIdempotencyKey(f.ctx, tenantA, "k1")
+	if err != nil || found == nil || found.ID != f.project.ID || found.RequestHash != "h" || len(found.Phases[4].Tasks) != 100 {
+		t.Fatalf("found = %+v, err %v", found, err)
+	}
+	if found, err := f.repo.FindByIdempotencyKey(f.ctx, tenantB, "k1"); found != nil || err != nil {
+		t.Fatalf("other tenant = %+v, err %v", found, err)
+	}
+}
 
-	t.Run("a failing task rolls back the whole submission", func(t *testing.T) {
-		before := rowCounts(t, db)
-		broken := storedProject("PRJ-ATOMIC", "atomic", 5, 100)
-		broken.Phases[4].Tasks[99].AssigneeID = "not-a-uuid"
-		err := repo.Create(ctx, broken)
-		if err == nil || rowCounts(t, db) != before {
-			t.Fatalf("err %v, counts %v -> %v", err, before, rowCounts(t, db))
-		}
-	})
+func (f *repoFixture) testReusedKey(t *testing.T) {
+	before := rowCounts(t, f.db)
+	err := f.repo.Create(f.ctx, storedProject("PRJ-2", "k1", 1, 1))
+	if !errors.Is(err, errKeyUsed) || rowCounts(t, f.db) != before {
+		t.Fatalf("err %v, counts %v -> %v", err, before, rowCounts(t, f.db))
+	}
+}
 
-	t.Run("concurrent submissions with one key create one project", func(t *testing.T) {
-		before := rowCounts(t, db)
-		var wg sync.WaitGroup
-		results := make([]error, 4)
-		for i := range results {
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				results[i] = repo.Create(ctx, storedProject("PRJ-RACE", "race", 1, 1))
-			}(i)
+func (f *repoFixture) testDuplicateCode(t *testing.T) {
+	err := f.repo.Create(f.ctx, storedProject("PRJ-1", "k2", 1, 1))
+	if errorCode(err) != "CONFLICT" {
+		t.Fatalf("same tenant: %v", err)
+	}
+	other := storedProject("PRJ-1", "k2", 1, 1)
+	other.TenantID = tenantB
+	if err := f.repo.Create(f.ctx, other); err != nil {
+		t.Fatalf("other tenant: %v", err)
+	}
+}
+
+func (f *repoFixture) testRollback(t *testing.T) {
+	before := rowCounts(t, f.db)
+	broken := storedProject("PRJ-ATOMIC", "atomic", 5, 100)
+	broken.Phases[4].Tasks[99].AssigneeID = "not-a-uuid"
+	err := f.repo.Create(f.ctx, broken)
+	if err == nil || rowCounts(t, f.db) != before {
+		t.Fatalf("err %v, counts %v -> %v", err, before, rowCounts(t, f.db))
+	}
+}
+
+func (f *repoFixture) testConcurrentKey(t *testing.T) {
+	before := rowCounts(t, f.db)
+	var wg sync.WaitGroup
+	results := make([]error, 4)
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = f.repo.Create(f.ctx, storedProject("PRJ-RACE", "race", 1, 1))
+		}(i)
+	}
+	wg.Wait()
+	created := 0
+	for _, err := range results {
+		switch {
+		case err == nil:
+			created++
+		case !errors.Is(err, errKeyUsed):
+			t.Fatalf("unexpected error: %v", err)
 		}
-		wg.Wait()
-		created := 0
-		for _, err := range results {
-			switch {
-			case err == nil:
-				created++
-			case !errors.Is(err, errKeyUsed):
-				t.Fatalf("unexpected error: %v", err)
-			}
-		}
-		if after := rowCounts(t, db); created != 1 || after[0] != before[0]+1 {
-			t.Fatalf("created %d, counts %v -> %v", created, before, after)
-		}
-	})
+	}
+	if after := rowCounts(t, f.db); created != 1 || after[0] != before[0]+1 {
+		t.Fatalf("created %d, counts %v -> %v", created, before, after)
+	}
 }
