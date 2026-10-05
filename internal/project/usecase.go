@@ -181,7 +181,7 @@ func (u *projectUsecase) build(ctx context.Context, tenantID string, input Creat
 		Code:        strings.TrimSpace(input.Code),
 		Description: utils.Optional(input.Description),
 	}
-	v.Length("name", project.Name, 3, 100, "Name must be 3–100 characters.")
+	v.Length("name", project.Name, 3, 100, "Name must be 3-100 characters.")
 	v.Length("code", project.Code, 1, 50, "Code is required and must be at most 50 characters.")
 	if project.Description != nil {
 		v.Length("description", *project.Description, 0, 2000, "Description must be at most 2000 characters.")
@@ -189,7 +189,7 @@ func (u *projectUsecase) build(ctx context.Context, tenantID string, input Creat
 	project.OwnerID = v.employee("ownerId", input.OwnerID)
 	project.StartDate, project.EndDate = v.dates("", input.StartDate, input.EndDate)
 	if n := len(input.Phases); n < 1 || n > maxPhases {
-		v.Add("phases", fmt.Sprintf("A Project must have 1–%d phases.", maxPhases))
+		v.Add("phases", fmt.Sprintf("A Project must have 1-%d phases.", maxPhases))
 	}
 
 	orders := map[int]bool{}
@@ -212,7 +212,7 @@ func (v *validation) phase(phase *Phase, i int, in PhaseInput, project *Project,
 	v.Length(path+"name", phase.Name, 1, 100, "Name is required and must be at most 100 characters.")
 	switch {
 	case in.Order == nil || *in.Order < 1 || *in.Order > maxOrder:
-		v.Add(path+"order", fmt.Sprintf("Order must be 1–%d.", maxOrder))
+		v.Add(path+"order", fmt.Sprintf("Order must be 1-%d.", maxOrder))
 	case orders[*in.Order]:
 		v.Add(path+"order", "Order must be unique within the Project.")
 	default:
@@ -223,7 +223,7 @@ func (v *validation) phase(phase *Phase, i int, in PhaseInput, project *Project,
 	v.within(path+"startDate", phase.StartDate, project.StartDate, project.EndDate, msgPhaseDates)
 	v.within(path+"endDate", phase.EndDate, project.StartDate, project.EndDate, msgPhaseDates)
 	if n := len(in.Tasks); n < 1 || n > maxTasksPerPhase {
-		v.Add(path+"tasks", fmt.Sprintf("A Phase must have 1–%d tasks.", maxTasksPerPhase))
+		v.Add(path+"tasks", fmt.Sprintf("A Phase must have 1-%d tasks.", maxTasksPerPhase))
 	}
 
 	phase.Tasks = make([]Task, len(in.Tasks))
