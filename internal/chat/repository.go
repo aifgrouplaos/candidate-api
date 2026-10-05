@@ -29,15 +29,6 @@ func ProvisionConversation(tx *gorm.DB, tenantID, employeeID string) error {
 	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&Conversation{TenantID: tenantID, EmployeeID: employeeID}).Error
 }
 
-// BackfillConversations provisions conversations for Employee logins created before chat existed.
-// ponytail: runs at every startup and scans all Employee logins; move it to a one-off
-// migration if startup time or the employees table grows beyond test-tenant size.
-func BackfillConversations(ctx context.Context, db contract.ORM) error {
-	return db.Session(ctx).Exec(`INSERT INTO conversations (tenant_id, employee_id, created_at, updated_at)
-		SELECT tenant_id, id, now(), now() FROM employees WHERE user_id IS NOT NULL
-		ON CONFLICT DO NOTHING`).Error
-}
-
 func (r *chatRepository) List(ctx context.Context, reader auth.Principal, filter ConversationFilter) ([]*Conversation, int64, error) {
 	query := r.readable(ctx, reader)
 	if filter.Search != "" {

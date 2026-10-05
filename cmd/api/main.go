@@ -132,10 +132,6 @@ func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
 		gormDB.Close()
 		return nil, fmt.Errorf("department seed failed: %w", err)
 	}
-	if err := chat.BackfillConversations(context.Background(), gormDB); err != nil {
-		gormDB.Close()
-		return nil, fmt.Errorf("conversation backfill failed: %w", err)
-	}
 	return gormDB, nil
 }
 

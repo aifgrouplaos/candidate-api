@@ -174,23 +174,6 @@ func TestConversationsAgainstPostgres(t *testing.T) {
 	if err != nil || restored.EmployeeName != "Somchai Restored" || restored.LastMessage.ID != last.ID {
 		t.Fatalf("restored = %+v, err %v", restored, err)
 	}
-
-	// Logins created before chat existed get a conversation from the backfill.
-	userID := somchaiLogin.UserID
-	legacy := &employee.Employee{TenantID: tenantA, UserID: &userID, EmployeeCode: "EMP-9999", FullName: "Legacy", Email: "legacy@example.test", Status: employee.StatusActive}
-	db.Raw().Exec("DELETE FROM employees WHERE id = ?", somchai.ID)
-	if err := db.Raw().Create(legacy).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := BackfillConversations(ctx, db); err != nil {
-		t.Fatal(err)
-	}
-	if err := BackfillConversations(ctx, db); err != nil {
-		t.Fatalf("backfill twice: %v", err)
-	}
-	if _, names := list(t, repo, adminA, ConversationFilter{Search: "Legacy"}); names != "Legacy" {
-		t.Fatalf("backfilled = %s", names)
-	}
 }
 
 func TestMessagesAgainstPostgres(t *testing.T) {
