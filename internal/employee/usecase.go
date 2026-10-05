@@ -34,6 +34,7 @@ const (
 	msgStatus       = "Status must be active, inactive, or on_leave."
 	msgAvatarType   = "Avatar must be a JPG, PNG, or WebP image."
 	msgAvatarSize   = "Avatar must be 2 MB or smaller."
+	msgNoStorage    = "avatar storage is unavailable"
 )
 
 var (
@@ -298,7 +299,7 @@ func (u *employeeUsecase) UploadAvatar(ctx context.Context, actor auth.Principal
 		return nil, err
 	}
 	if u.files == nil {
-		return nil, errs.Internal("avatar storage is unavailable")
+		return nil, errs.Internal(msgNoStorage)
 	}
 	data, err := readAvatar(ctx, file)
 	if err != nil {
@@ -390,7 +391,7 @@ func (u *employeeUsecase) present(ctx context.Context, e *Employee) (*EmployeeVi
 		return result, nil
 	}
 	if u.files == nil {
-		return nil, errs.Internal("avatar storage is unavailable")
+		return nil, errs.Internal(msgNoStorage)
 	}
 	url, err := u.files.URL(ctx, u.bucket, key, avatarURLExpiry)
 	if err != nil {
