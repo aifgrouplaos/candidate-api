@@ -15,6 +15,8 @@ import (
 	"github.com/gofiber/fiber/v2"
 )
 
+const msgUnavailable = "rate limit service is unavailable"
+
 // Store is the port for counting requests. Hit records one request under key and
 // reports whether it exceeds limit within window, and how long until it would not.
 type Store interface {
@@ -33,13 +35,13 @@ type Bucket struct {
 func New(store Store, buckets func(*fiber.Ctx) []Bucket) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if store == nil {
-			return errs.Internal("rate limit service is unavailable")
+			return errs.Internal(msgUnavailable)
 		}
 		for _, bucket := range buckets(c) {
 			exceeded, retry, err := store.Hit(c.UserContext(), bucketKey(bucket), bucket.Limit, bucket.Window)
 			if err != nil {
 				slog.Error("rate limit check failed", "error", err, "bucket", bucket.Name, "path", c.Path())
-				return errs.Internal("rate limit service is unavailable")
+				return errs.Internal(msgUnavailable)
 			}
 			if exceeded {
 				retryAfter := int64(math.Ceil(retry.Seconds()))

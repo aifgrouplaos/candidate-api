@@ -9,6 +9,8 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 )
 
+var errInvalidResponse = errors.New("rate limit script returned an invalid response")
+
 var slidingWindow = goredis.NewScript(`
 local now = tonumber(ARGV[1])
 local window = tonumber(ARGV[2])
@@ -40,12 +42,12 @@ func (s *RedisStore) Hit(ctx context.Context, key string, limit int64, window ti
 		return false, 0, err
 	}
 	if len(result) != 2 {
-		return false, 0, errors.New("rate limit script returned an invalid response")
+		return false, 0, errInvalidResponse
 	}
 	count, countOK := result[0].(int64)
 	retryMS, retryOK := result[1].(int64)
 	if !countOK || !retryOK {
-		return false, 0, errors.New("rate limit script returned an invalid response")
+		return false, 0, errInvalidResponse
 	}
 	return count > limit, time.Duration(retryMS) * time.Millisecond, nil
 }

@@ -35,6 +35,7 @@ const (
 	msgAvatarType   = "Avatar must be a JPG, PNG, or WebP image."
 	msgAvatarSize   = "Avatar must be 2 MB or smaller."
 	msgNoStorage    = "avatar storage is unavailable"
+	msgNoDepartment = "Department does not exist."
 )
 
 var (
@@ -368,7 +369,7 @@ func (u *employeeUsecase) department(ctx context.Context, v *validation, value *
 		return nil, nil
 	}
 	if _, err := uuid.Parse(*value); err != nil {
-		v.add("departmentId", "Department does not exist.")
+		v.add("departmentId", msgNoDepartment)
 		return value, nil
 	}
 	exists, err := u.repo.DepartmentExists(ctx, *value)
@@ -376,7 +377,7 @@ func (u *employeeUsecase) department(ctx context.Context, v *validation, value *
 		return nil, err
 	}
 	if !exists {
-		v.add("departmentId", "Department does not exist.")
+		v.add("departmentId", msgNoDepartment)
 	}
 	return value, nil
 }

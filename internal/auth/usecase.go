@@ -21,6 +21,7 @@ const (
 	accessTokenTTL  = 30 * time.Minute
 	refreshTokenTTL = 7 * 24 * time.Hour
 	msgIssueSession = "could not issue a session"
+	msgNoRefresh    = "Refresh token is required."
 )
 
 type Credentials struct {
@@ -86,7 +87,7 @@ func (u *authUsecase) Login(ctx context.Context, input Credentials) (*Session, e
 
 func (u *authUsecase) Refresh(ctx context.Context, input RefreshInput) (*Session, error) {
 	if strings.TrimSpace(input.RefreshToken) == "" {
-		return nil, apierror.Validation([]apierror.FieldError{{Field: "refreshToken", Message: "Refresh token is required."}})
+		return nil, apierror.Validation([]apierror.FieldError{{Field: "refreshToken", Message: msgNoRefresh}})
 	}
 	oldHash := hashToken(input.RefreshToken)
 	now := time.Now().UTC()
@@ -111,7 +112,7 @@ func (u *authUsecase) Refresh(ctx context.Context, input RefreshInput) (*Session
 
 func (u *authUsecase) Logout(ctx context.Context, userID, sessionID string, input RefreshInput) error {
 	if strings.TrimSpace(input.RefreshToken) == "" {
-		return apierror.Validation([]apierror.FieldError{{Field: "refreshToken", Message: "Refresh token is required."}})
+		return apierror.Validation([]apierror.FieldError{{Field: "refreshToken", Message: msgNoRefresh}})
 	}
 	if err := u.repo.RevokeSession(ctx, hashToken(input.RefreshToken), userID, sessionID, time.Now().UTC()); err != nil {
 		return normalizeAuthError(err)
