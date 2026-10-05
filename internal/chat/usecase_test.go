@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
@@ -77,6 +78,40 @@ func (r *memoryRepository) Messages(_ context.Context, filter MessageFilter) ([]
 		hi = min(hi, lo+filter.Limit)
 	}
 	return r.messages[lo:hi], nil
+}
+
+func (r *memoryRepository) Send(_ context.Context, m *Message) (*Message, error) {
+	for _, stored := range r.messages {
+		if stored.ConversationID == m.ConversationID && stored.SenderID == m.SenderID && stored.ClientMessageID == m.ClientMessageID {
+			return stored, nil
+		}
+	}
+	m.ID, m.Sequence = fmt.Sprintf("m%d", len(r.messages)+1), int64(len(r.messages)+1)
+	r.messages = append(r.messages, m)
+	return m, nil
+}
+
+func (r *memoryRepository) MarkRead(_ context.Context, reader auth.Principal, _, messageID string) error {
+	i := r.index(messageID)
+	if i < 0 {
+		return errCursorNotFound
+	}
+	for _, m := range r.messages[:i+1] {
+		if m.SenderID != reader.UserID && m.ReadAt == nil {
+			m.ReadAt = ptr(time.Date(2026, 10, 5, 8, 30, 0, 0, time.UTC))
+		}
+	}
+	return nil
+}
+
+func (r *memoryRepository) UnreadTotal(_ context.Context, reader auth.Principal) (int64, error) {
+	var total int64
+	for _, m := range r.messages {
+		if r.canRead(reader) && m.SenderID != reader.UserID && m.ReadAt == nil {
+			total++
+		}
+	}
+	return total, nil
 }
 
 func (r *memoryRepository) index(id string) int {
@@ -241,6 +276,84 @@ func TestMessagesRejectsInvalidCursors(t *testing.T) {
 		if _, _, err := uc.Messages(context.Background(), adminA, "c1", query); errorCode(err) != "VALIDATION_ERROR" {
 			t.Fatalf("%+v: err = %v", query, err)
 		}
+	}
+}
+
+const clientID = "8f14e45f-ceea-467f-a8f1-6d1b8c2a0001"
+
+func TestSendIsIdempotentPerClientMessageID(t *testing.T) {
+	repo := newRepositoryWithMessages(2)
+	uc := NewChatUsecase(repo, signAvatar)
+	ctx := context.Background()
+
+	sent, err := uc.Send(ctx, adminA, "c1", SendInput{ClientMessageID: strings.ToUpper(clientID), Text: "Hello"})
+	if err != nil || sent.Sequence != 3 || sent.ClientMessageID != clientID || sent.Status != statusSent || sent.ReadAt != nil {
+		t.Fatalf("sent = %+v, err %v", sent, err)
+	}
+	retry, err := uc.Send(ctx, adminA, "c1", SendInput{ClientMessageID: clientID, Text: "Hello"})
+	if err != nil || retry.ID != sent.ID || len(repo.messages) != 3 {
+		t.Fatalf("retry = %+v, err %v, stored %d", retry, err, len(repo.messages))
+	}
+	if _, err := uc.Send(ctx, adminA, "c1", SendInput{ClientMessageID: clientID, Text: "Changed"}); errorCode(err) != "IDEMPOTENCY_CONFLICT" {
+		t.Fatalf("changed payload err = %v", err)
+	}
+	if other, err := uc.Send(ctx, employeeA, "c1", SendInput{ClientMessageID: clientID, Text: "Hello"}); err != nil || other.ID == sent.ID {
+		t.Fatalf("other sender = %+v, err %v", other, err)
+	}
+}
+
+func TestSendValidatesPayload(t *testing.T) {
+	uc := NewChatUsecase(&memoryRepository{}, signAvatar)
+	for _, input := range []SendInput{
+		{ClientMessageID: "not-a-uuid", Text: "hi"},
+		{ClientMessageID: clientID, Text: ""},
+		{ClientMessageID: clientID, Text: " \n\t"},
+		{ClientMessageID: clientID, Text: "a\x00b"},
+		{ClientMessageID: clientID, Text: strings.Repeat("ສ", 2001)},
+	} {
+		if _, err := uc.Send(context.Background(), employeeA, "c1", input); errorCode(err) != "VALIDATION_ERROR" {
+			t.Fatalf("%q: err = %v", input, err)
+		}
+	}
+	if _, err := uc.Send(context.Background(), employeeA, "c1", SendInput{ClientMessageID: clientID, Text: strings.Repeat("ສ", 2000)}); err != nil {
+		t.Fatalf("2000 runes err = %v", err)
+	}
+}
+
+func TestSendAndReadRequireParticipant(t *testing.T) {
+	repo := newRepositoryWithMessages(1)
+	uc := NewChatUsecase(repo, signAvatar)
+	for _, reader := range []auth.Principal{adminB, otherA} {
+		if _, err := uc.Send(context.Background(), reader, "c1", SendInput{ClientMessageID: clientID, Text: "hi"}); errorCode(err) != "NOT_FOUND" {
+			t.Fatalf("%s send err = %v", reader.UserID, err)
+		}
+		if err := uc.MarkRead(context.Background(), reader, "c1", ReadInput{LastReadMessageID: "m1"}); errorCode(err) != "NOT_FOUND" {
+			t.Fatalf("%s read err = %v", reader.UserID, err)
+		}
+	}
+	if len(repo.messages) != 1 || repo.messages[0].ReadAt != nil {
+		t.Fatalf("messages changed: %+v", repo.messages)
+	}
+}
+
+func TestMarkReadExposesReadState(t *testing.T) {
+	uc := NewChatUsecase(newRepositoryWithMessages(3), signAvatar)
+	ctx := context.Background()
+	if err := uc.MarkRead(ctx, adminA, "c1", ReadInput{LastReadMessageID: "m2"}); err != nil {
+		t.Fatal(err)
+	}
+	messages, _, _ := uc.Messages(ctx, adminA, "c1", MessageQuery{})
+	got, _ := json.Marshal(messages[1])
+	if !strings.Contains(string(got), `"status":"read","createdAt":"0001-01-01T00:00:00Z","readAt":"2026-10-05T08:30:00Z"`) || messages[2].Status != statusSent {
+		t.Fatalf("m2 = %s, m3 status %s", got, messages[2].Status)
+	}
+	for reader, want := range map[auth.Principal]int64{adminA: 1, employeeA: 0, adminB: 0} {
+		if count, err := uc.UnreadCount(ctx, reader); err != nil || count.Total != want {
+			t.Fatalf("%s unread = %+v, err %v", reader.UserID, count, err)
+		}
+	}
+	if err := uc.MarkRead(ctx, adminA, "c1", ReadInput{LastReadMessageID: "missing"}); errorCode(err) != "VALIDATION_ERROR" {
+		t.Fatalf("missing message err = %v", err)
 	}
 }
 

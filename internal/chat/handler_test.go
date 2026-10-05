@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,9 +29,10 @@ func TestChatRoutesContract(t *testing.T) {
 	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})
 	NewChatHandler(NewChatUsecase(newRepositoryWithMessages(3), signAvatar)).RegisterRoutes(app, auth.Authentication(token, activeSessions{}))
 
-	do := func(method, path string, actor *auth.Principal) (int, map[string]json.RawMessage) {
+	do := func(method, path string, actor *auth.Principal, body ...string) (int, map[string]json.RawMessage) {
 		t.Helper()
-		request := httptest.NewRequest(method, path, nil)
+		request := httptest.NewRequest(method, path, strings.NewReader(strings.Join(body, "")))
+		request.Header.Set("Content-Type", "application/json")
 		if actor != nil {
 			bearer, err := token.Sign(contract.Claims{"sub": actor.UserID, "tenantId": actor.TenantID, "role": string(actor.Role), "sid": "s1"}, time.Minute)
 			if err != nil {
@@ -83,5 +85,35 @@ func TestChatRoutesContract(t *testing.T) {
 	_, page := do(http.MethodGet, "/chat/conversations/c1/messages?limit=2&before=m3", &adminA)
 	if string(page["meta"]) != `{"hasMoreBefore":false,"hasMoreAfter":true,"nextBefore":null}` {
 		t.Fatalf("messages meta = %s", page["meta"])
+	}
+
+	send := `{"clientMessageId":"8f14e45f-ceea-467f-a8f1-6d1b8c2a0001","text":"Hello"}`
+	writes := []struct {
+		method, path, body string
+		actor              *auth.Principal
+		status             int
+		want               string
+	}{
+		{http.MethodPost, "/chat/conversations/c1/messages", send, nil, fiber.StatusUnauthorized, `"UNAUTHORIZED"`},
+		{http.MethodPost, "/chat/conversations/c1/messages", send, &adminB, fiber.StatusNotFound, `"NOT_FOUND"`},
+		{http.MethodPost, "/chat/conversations/c1/messages", `{`, &adminA, fiber.StatusBadRequest, `"BAD_REQUEST"`},
+		{http.MethodPost, "/chat/conversations/c1/messages", `{"clientMessageId":"x","text":""}`, &adminA, fiber.StatusUnprocessableEntity, `"field":"text"`},
+		{http.MethodPost, "/chat/conversations/c1/messages", send, &adminA, fiber.StatusCreated, `"sequence":4`},
+		{http.MethodPost, "/chat/conversations/c1/messages", send, &adminA, fiber.StatusCreated, `"sequence":4`},
+		{http.MethodPost, "/chat/conversations/c1/messages", strings.Replace(send, "Hello", "Changed", 1), &adminA, fiber.StatusConflict, `"IDEMPOTENCY_CONFLICT"`},
+		{http.MethodGet, "/chat/unread-count", "", &adminA, fiber.StatusOK, `{"total":3}`},
+		{http.MethodPost, "/chat/conversations/c1/read", `{"lastReadMessageId":"m3"}`, &adminB, fiber.StatusNotFound, `"NOT_FOUND"`},
+		{http.MethodPost, "/chat/conversations/c1/read", `{"lastReadMessageId":"nope"}`, &adminA, fiber.StatusUnprocessableEntity, `"field":"lastReadMessageId"`},
+		{http.MethodPost, "/chat/conversations/c1/read", `{"lastReadMessageId":"m2"}`, &adminA, fiber.StatusOK, `null`},
+		{http.MethodGet, "/chat/unread-count", "", &adminA, fiber.StatusOK, `{"total":1}`},
+		{http.MethodGet, "/chat/unread-count", "", &employeeA, fiber.StatusOK, `{"total":1}`},
+		{http.MethodGet, "/chat/unread-count", "", nil, fiber.StatusUnauthorized, `"UNAUTHORIZED"`},
+	}
+	for _, tc := range writes {
+		status, body := do(tc.method, tc.path, tc.actor, tc.body)
+		got := string(body["data"]) + string(body["error"])
+		if status != tc.status || !strings.Contains(got, tc.want) {
+			t.Fatalf("%s %s %s: %d %s", tc.method, tc.path, tc.body, status, got)
+		}
 	}
 }

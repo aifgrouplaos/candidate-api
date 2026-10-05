@@ -543,6 +543,10 @@ paths:
       tags: [Chat]
       operationId: sendMessage
       summary: Persist a message and broadcast it to participant sessions
+      description: >-
+        `clientMessageId` is idempotent per sender within the conversation. Repeating it with
+        the same `text` returns the original Message with `201`; different `text` returns
+        `409 IDEMPOTENCY_CONFLICT`. `text` must not be blank.
       requestBody:
         required: true
         content:
@@ -577,6 +581,10 @@ paths:
       tags: [Chat]
       operationId: markConversationRead
       summary: Advance the caller's shared read position
+      description: >-
+        Marks the other participant's messages through `lastReadMessageId` as read. The
+        position never moves back; an older message ID is a no-op. A message ID outside this
+        conversation returns `422`.
       requestBody:
         required: true
         content:

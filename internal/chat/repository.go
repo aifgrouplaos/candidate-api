@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"time"
 
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/errs"
@@ -15,6 +16,10 @@ import (
 )
 
 var errNotFound = *errs.NotFound("Conversation not found.")
+
+// unreadMessage matches messages m of conversations that the reader whose user ID is
+// bound to ? has not read; only the other participant's messages count.
+const unreadMessage = "m.conversation_id = conversations.id AND m.sender_id <> ? AND m.read_at IS NULL"
 
 type chatRepository struct {
 	db contract.ORM
@@ -36,7 +41,7 @@ func (r *chatRepository) List(ctx context.Context, reader auth.Principal, filter
 		query = query.Where("(e.full_name ILIKE ? OR e.email ILIKE ? OR e.employee_code ILIKE ?)", pattern, pattern, pattern)
 	}
 	if filter.UnreadOnly {
-		query = query.Where("EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = conversations.id AND m.sender_id <> ?)", reader.UserID)
+		query = query.Where("EXISTS (SELECT 1 FROM messages m WHERE "+unreadMessage+")", reader.UserID)
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -117,13 +122,63 @@ func (r *chatRepository) readable(ctx context.Context, reader auth.Principal) *g
 	return query
 }
 
-// selectView adds the Employee summary and reader's unread count, which counts only
-// messages from the other participant.
-// ponytail: there is no stored read position yet, so every such message is unread; the
-// unread count and unreadOnly filter must also compare against it once it exists.
+// selectView adds the Employee summary and reader's unread count.
 func selectView(query *gorm.DB, reader auth.Principal) *gorm.DB {
 	return query.Select(`conversations.*, e.full_name AS employee_name, e.avatar_url AS employee_avatar,
-		(SELECT COUNT(*) FROM messages m WHERE m.conversation_id = conversations.id AND m.sender_id <> ?) AS unread_count`, reader.UserID)
+		(SELECT COUNT(*) FROM messages m WHERE `+unreadMessage+`) AS unread_count`, reader.UserID)
+}
+
+func (r *chatRepository) Send(ctx context.Context, m *Message) (*Message, error) {
+	var id string
+	err := r.db.Transaction(ctx, func(tx *gorm.DB) error {
+		// Locking the conversation serializes its sends, so sequences have no gaps or
+		// duplicates and a concurrent retry finds the first attempt's message.
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&Conversation{}, "id = ?", m.ConversationID).Error; err != nil {
+			return err
+		}
+		var existing []string
+		err := tx.Model(&Message{}).Where("conversation_id = ? AND sender_id = ? AND client_message_id = ?", m.ConversationID, m.SenderID, m.ClientMessageID).
+			Pluck("id", &existing).Error
+		if err != nil {
+			return err
+		}
+		if len(existing) > 0 {
+			id = existing[0]
+			return nil
+		}
+		if err := tx.Model(&Message{}).Where("conversation_id = ?", m.ConversationID).Select("COALESCE(MAX(sequence), 0) + 1").Scan(&m.Sequence).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(m).Error; err != nil {
+			return err
+		}
+		id = m.ID
+		return tx.Model(&Conversation{}).Where("id = ?", m.ConversationID).Update("updated_at", m.CreatedAt).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	var stored Message
+	return &stored, r.db.Session(ctx).Preload("Sender").First(&stored, "id = ?", id).Error
+}
+
+func (r *chatRepository) MarkRead(ctx context.Context, reader auth.Principal, conversationID, messageID string) error {
+	sequence, err := r.sequence(ctx, conversationID, messageID)
+	if err != nil {
+		return err
+	}
+	// Only unread messages change, so an older message never moves the read position back.
+	// ponytail: one row update per newly read message; a stored per-participant position
+	// would make this O(1) if conversations grow very long.
+	return r.db.Session(ctx).Model(&Message{}).
+		Where("conversation_id = ? AND sequence <= ? AND sender_id <> ? AND read_at IS NULL", conversationID, sequence, reader.UserID).
+		Update("read_at", time.Now()).Error
+}
+
+func (r *chatRepository) UnreadTotal(ctx context.Context, reader auth.Principal) (int64, error) {
+	var total int64
+	err := r.readable(ctx, reader).Joins("JOIN messages m ON "+unreadMessage, reader.UserID).Count(&total).Error
+	return total, err
 }
 
 func (r *chatRepository) attachLastMessages(ctx context.Context, conversations []*Conversation) error {

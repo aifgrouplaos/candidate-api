@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -225,5 +226,106 @@ func TestMessagesAgainstPostgres(t *testing.T) {
 	messages, _ := repo.Messages(ctx, MessageFilter{ConversationID: somchaiConversation, Limit: 1})
 	if messages[0].Sender == nil || messages[0].Sender.Role != auth.RoleEmployee {
 		t.Fatalf("sender = %+v", messages[0].Sender)
+	}
+}
+
+func TestSendAndReadAgainstPostgres(t *testing.T) {
+	db := newTestDB(t)
+	f := &chatFixture{t: t, db: db, employees: employee.NewEmployeeRepository(db, ProvisionConversation)}
+	repo := NewChatRepository(db)
+	ctx := context.Background()
+	admin := f.admin(tenantA, "admin@example.test")
+	_, somchai := f.employee(tenantA, "Somchai", "somchai@example.test")
+	f.employee(tenantA, "Anna", "anna@example.test")
+	conversations, _ := list(t, repo, admin, ConversationFilter{})
+	conversation := conversations[1].ID
+
+	send := func(sender auth.Principal, clientID, text string) *Message {
+		t.Helper()
+		m, err := repo.Send(ctx, &Message{ConversationID: conversation, SenderID: sender.UserID, ClientMessageID: clientID, Text: text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	clientID := func(i int) string { return fmt.Sprintf("00000000-0000-0000-0000-%012d", i) }
+
+	// Concurrent sends, including retries of one clientMessageId, get gapless sequences.
+	var wg sync.WaitGroup
+	for i := 1; i <= 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			id, text := clientID(99), "retry"
+			if i%2 == 0 {
+				id, text = clientID(i/2), "hi"
+			}
+			if _, err := repo.Send(ctx, &Message{ConversationID: conversation, SenderID: somchai.UserID, ClientMessageID: id, Text: text}); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	var stored []*Message
+	db.Raw().Where("conversation_id = ?", conversation).Order("sequence").Find(&stored)
+	if len(stored) != 11 || stored[0].Sequence != 1 || stored[10].Sequence != 11 {
+		t.Fatalf("stored = %d messages", len(stored))
+	}
+	first, retry := send(somchai, clientID(1), "ignored"), send(somchai, clientID(1), "ignored")
+	if first.ID != retry.ID || first.Text != "hi" || first.Sender == nil || first.Sender.FullName != "Somchai" {
+		t.Fatalf("replay = %+v, %+v", first, retry)
+	}
+	reply := send(admin, clientID(1), "reply")
+	if reply.ID == first.ID || reply.Sequence != 12 {
+		t.Fatalf("admin reply = %+v", reply)
+	}
+	wantInbox(t, repo, admin, ConversationFilter{}, "Somchai,Anna")
+
+	unread := func(reader auth.Principal) (int, int64) {
+		t.Helper()
+		c, err := repo.FindByID(ctx, reader, conversation)
+		total, totalErr := repo.UnreadTotal(ctx, reader)
+		if err != nil || totalErr != nil {
+			t.Fatal(err, totalErr)
+		}
+		return c.UnreadCount, total
+	}
+	if count, total := unread(admin); count != 11 || total != 11 {
+		t.Fatalf("admin unread = %d, total %d", count, total)
+	}
+
+	// Reading through a message marks only the other participant's earlier messages.
+	fifthID := stored[4].ID
+	if err := repo.MarkRead(ctx, admin, conversation, fifthID); err != nil {
+		t.Fatal(err)
+	}
+	if count, total := unread(admin); count != 6 || total != 6 {
+		t.Fatalf("after read admin unread = %d, total %d", count, total)
+	}
+	var readAt time.Time
+	db.Raw().Model(&Message{}).Where("id = ?", fifthID).Pluck("read_at", &readAt)
+
+	// An older position never moves the read position back or restamps readAt.
+	if err := repo.MarkRead(ctx, admin, conversation, stored[2].ID); err != nil {
+		t.Fatal(err)
+	}
+	var again time.Time
+	db.Raw().Model(&Message{}).Where("id = ?", fifthID).Pluck("read_at", &again)
+	if count, _ := unread(admin); count != 6 || !again.Equal(readAt) {
+		t.Fatalf("older read: unread %d, readAt %v -> %v", count, readAt, again)
+	}
+
+	if err := repo.MarkRead(ctx, admin, conversation, reply.ID); err != nil {
+		t.Fatal(err)
+	}
+	if count, total := unread(admin); count != 0 || total != 0 {
+		t.Fatalf("all read admin unread = %d, total %d", count, total)
+	}
+	wantInbox(t, repo, admin, ConversationFilter{UnreadOnly: true}, "")
+	if count, total := unread(somchai); count != 1 || total != 1 {
+		t.Fatalf("employee unread = %d, total %d", count, total)
+	}
+	if err := repo.MarkRead(ctx, admin, conversation, "not-a-uuid"); !errors.Is(err, errCursorNotFound) {
+		t.Fatalf("bad id err = %v", err)
 	}
 }

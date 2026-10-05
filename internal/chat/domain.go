@@ -25,15 +25,18 @@ type Conversation struct {
 func (Conversation) TableName() string { return "conversations" }
 
 // Message is ordered by Sequence, which increases within its conversation; IDs carry no order.
+// A sender's ClientMessageID identifies one message within the conversation.
 type Message struct {
 	ID              string     `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	ConversationID  string     `gorm:"type:uuid;not null;uniqueIndex:idx_messages_conversation_sequence"`
+	ConversationID  string     `gorm:"type:uuid;not null;uniqueIndex:idx_messages_conversation_sequence;uniqueIndex:idx_messages_client_message"`
 	Sequence        int64      `gorm:"not null;uniqueIndex:idx_messages_conversation_sequence"`
-	SenderID        string     `gorm:"type:uuid;not null"`
+	SenderID        string     `gorm:"type:uuid;not null;uniqueIndex:idx_messages_client_message"`
 	Sender          *auth.User `gorm:"foreignKey:SenderID"`
-	ClientMessageID string     `gorm:"not null"`
+	ClientMessageID string     `gorm:"not null;uniqueIndex:idx_messages_client_message"`
 	Text            string     `gorm:"not null"`
 	CreatedAt       time.Time  `gorm:"autoCreateTime"`
+	// ReadAt is when the recipient's read position first reached this message.
+	ReadAt *time.Time
 }
 
 func (Message) TableName() string { return "messages" }
@@ -71,4 +74,14 @@ type ChatRepository interface {
 	// errCursorNotFound when a cursor is not a message in the conversation. It does not
 	// authorize; callers must load the conversation through FindByID first.
 	Messages(ctx context.Context, filter MessageFilter) ([]*Message, error)
+	// Send stores m with the conversation's next Sequence and moves the conversation to
+	// the top of the inbox, unless m's sender already sent its ClientMessageID there. It
+	// returns the stored message with its Sender either way. It does not authorize.
+	Send(ctx context.Context, m *Message) (*Message, error)
+	// MarkRead marks the other participant's messages through messageID as read by reader.
+	// It returns errCursorNotFound when messageID is not in the conversation. It does not
+	// authorize.
+	MarkRead(ctx context.Context, reader auth.Principal, conversationID, messageID string) error
+	// UnreadTotal counts reader's unread messages across the conversations reader may access.
+	UnreadTotal(ctx context.Context, reader auth.Principal) (int64, error)
 }
