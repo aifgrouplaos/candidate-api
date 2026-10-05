@@ -199,7 +199,7 @@ Message response:
 | `POST /chat/conversations` | Employee | Returns the Employee's existing conversation (idempotent; normally already created by `POST /employees`). |
 | `GET /chat/conversations/{id}` | Participant | Returns the authorized conversation. |
 | `GET /chat/conversations/{id}/messages` | Participant | Query `limit` (default 30, max 100), `before` (exclusive older cursor), or `after` (exclusive newer cursor). Returns ascending messages and `{ "hasMoreBefore", "hasMoreAfter", "nextBefore" }` metadata. |
-| `POST /chat/conversations/{id}/messages` | Participant | Accepts `{ "clientMessageId", "text" }`. Returns the saved Message. Repeating a `clientMessageId` with the same payload returns the original Message; using it with a different payload returns `409 IDEMPOTENCY_CONFLICT`. |
+| `POST /chat/conversations/{id}/messages` | Participant | Accepts `{ "clientMessageId", "text" }`. Returns the saved Message. `clientMessageId` is a UUID scoped to its sender within the conversation. Repeating it with the same payload returns the original Message; using it with a different payload returns `409 IDEMPOTENCY_CONFLICT`. |
 | `POST /chat/conversations/{id}/read` | Participant | Accepts `{ "lastReadMessageId" }`; advances the participant's shared read position through that message. |
 | `GET /chat/unread-count` | Authenticated | Returns `{ "total": <count> }` for the caller. |
 | `POST /chat/ws-ticket` | Authenticated | Returns a single-use WebSocket ticket valid for 30–60 seconds. |

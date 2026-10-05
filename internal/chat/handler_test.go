@@ -107,6 +107,9 @@ func TestChatRoutesContract(t *testing.T) {
 		{http.MethodPost, "/chat/conversations/c1/read", `{"lastReadMessageId":"m2"}`, &adminA, fiber.StatusOK, `null`},
 		{http.MethodGet, "/chat/unread-count", "", &adminA, fiber.StatusOK, `{"total":1}`},
 		{http.MethodGet, "/chat/unread-count", "", &employeeA, fiber.StatusOK, `{"total":1}`},
+		{http.MethodPost, "/chat/conversations/c1/read", `{"lastReadMessageId":"m4"}`, &employeeA, fiber.StatusOK, `null`},
+		{http.MethodGet, "/chat/unread-count", "", &employeeA, fiber.StatusOK, `{"total":0}`},
+		{http.MethodGet, "/chat/unread-count", "", &adminA, fiber.StatusOK, `{"total":1}`},
 		{http.MethodGet, "/chat/unread-count", "", nil, fiber.StatusUnauthorized, `"UNAUTHORIZED"`},
 	}
 	for _, tc := range writes {
