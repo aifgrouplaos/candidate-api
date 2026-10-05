@@ -181,15 +181,15 @@ func (u *projectUsecase) build(ctx context.Context, tenantID string, input Creat
 		Code:        strings.TrimSpace(input.Code),
 		Description: optional(input.Description),
 	}
-	v.length("name", project.Name, 3, 100, "Name must be 3–100 characters.")
-	v.length("code", project.Code, 1, 50, "Code is required and must be at most 50 characters.")
+	v.Length("name", project.Name, 3, 100, "Name must be 3–100 characters.")
+	v.Length("code", project.Code, 1, 50, "Code is required and must be at most 50 characters.")
 	if project.Description != nil {
-		v.length("description", *project.Description, 0, 2000, "Description must be at most 2000 characters.")
+		v.Length("description", *project.Description, 0, 2000, "Description must be at most 2000 characters.")
 	}
 	project.OwnerID = v.employee("ownerId", input.OwnerID)
 	project.StartDate, project.EndDate = v.dates("", input.StartDate, input.EndDate)
 	if n := len(input.Phases); n < 1 || n > maxPhases {
-		v.add("phases", fmt.Sprintf("A Project must have 1–%d phases.", maxPhases))
+		v.Add("phases", fmt.Sprintf("A Project must have 1–%d phases.", maxPhases))
 	}
 
 	orders := map[int]bool{}
@@ -201,7 +201,7 @@ func (u *projectUsecase) build(ctx context.Context, tenantID string, input Creat
 	if err := u.checkEmployees(ctx, &v, tenantID); err != nil {
 		return nil, err
 	}
-	return project, v.err()
+	return project, v.Err()
 }
 
 // phase validates the Phase at index i and its Tasks; orders tracks Orders already used in the Project.
@@ -209,12 +209,12 @@ func (v *validation) phase(phase *Phase, i int, in PhaseInput, project *Project,
 	path := fmt.Sprintf("phases[%d].", i)
 	phase.Position = i
 	phase.Name = strings.TrimSpace(in.Name)
-	v.length(path+"name", phase.Name, 1, 100, "Name is required and must be at most 100 characters.")
+	v.Length(path+"name", phase.Name, 1, 100, "Name is required and must be at most 100 characters.")
 	switch {
 	case in.Order == nil || *in.Order < 1 || *in.Order > maxOrder:
-		v.add(path+"order", fmt.Sprintf("Order must be 1–%d.", maxOrder))
+		v.Add(path+"order", fmt.Sprintf("Order must be 1–%d.", maxOrder))
 	case orders[*in.Order]:
-		v.add(path+"order", "Order must be unique within the Project.")
+		v.Add(path+"order", "Order must be unique within the Project.")
 	default:
 		phase.Order = *in.Order
 		orders[phase.Order] = true
@@ -223,7 +223,7 @@ func (v *validation) phase(phase *Phase, i int, in PhaseInput, project *Project,
 	v.within(path+"startDate", phase.StartDate, project.StartDate, project.EndDate, msgPhaseDates)
 	v.within(path+"endDate", phase.EndDate, project.StartDate, project.EndDate, msgPhaseDates)
 	if n := len(in.Tasks); n < 1 || n > maxTasksPerPhase {
-		v.add(path+"tasks", fmt.Sprintf("A Phase must have 1–%d tasks.", maxTasksPerPhase))
+		v.Add(path+"tasks", fmt.Sprintf("A Phase must have 1–%d tasks.", maxTasksPerPhase))
 	}
 
 	phase.Tasks = make([]Task, len(in.Tasks))
@@ -236,17 +236,17 @@ func (v *validation) phase(phase *Phase, i int, in PhaseInput, project *Project,
 func (v *validation) task(task *Task, path string, j int, in TaskInput, phase *Phase) {
 	task.Position = j
 	task.Title = strings.TrimSpace(in.Title)
-	v.length(path+"title", task.Title, 1, 200, "Title is required and must be at most 200 characters.")
+	v.Length(path+"title", task.Title, 1, 200, "Title is required and must be at most 200 characters.")
 	task.Type, task.Priority = in.Type, in.Priority
 	if !in.Type.Valid() {
-		v.add(path+"type", "Type must be feature or bug.")
+		v.Add(path+"type", "Type must be feature or bug.")
 	}
 	if !in.Priority.Valid() {
-		v.add(path+"priority", "Priority must be low, medium, high, or critical.")
+		v.Add(path+"priority", "Priority must be low, medium, high, or critical.")
 	}
 	task.AssigneeID = v.employee(path+"assigneeId", in.AssigneeID)
 	if in.EstimateHours == nil || *in.EstimateHours <= 0 || *in.EstimateHours > maxEstimateHours {
-		v.add(path+"estimateHours", "Estimate hours must be greater than 0 and at most 999.")
+		v.Add(path+"estimateHours", "Estimate hours must be greater than 0 and at most 999.")
 	} else {
 		task.EstimateHours = *in.EstimateHours
 	}
@@ -255,9 +255,9 @@ func (v *validation) task(task *Task, path string, j int, in TaskInput, phase *P
 	task.Severity = in.Severity
 	switch {
 	case in.Type == TaskBug && (in.Severity == nil || !in.Severity.Valid()):
-		v.add(path+"severity", "Severity must be minor, major, or critical for bug tasks.")
+		v.Add(path+"severity", "Severity must be minor, major, or critical for bug tasks.")
 	case in.Type != TaskBug && in.Severity != nil:
-		v.add(path+"severity", "Severity must be null unless the task is a bug.")
+		v.Add(path+"severity", "Severity must be null unless the task is a bug.")
 	}
 }
 
@@ -278,7 +278,7 @@ func (u *projectUsecase) checkEmployees(ctx context.Context, v *validation, tena
 	}
 	for _, ref := range v.refs {
 		if !active[ref.id] {
-			v.add(ref.field, msgNoEmployee)
+			v.Add(ref.field, msgNoEmployee)
 		}
 	}
 	return nil
@@ -310,33 +310,16 @@ func view(p *Project) *ProjectView {
 type employeeRef struct{ id, field string }
 
 type validation struct {
-	errors []apierror.FieldError
+	apierror.FieldErrors
 	// refs are well-formed Employee IDs to check against the tenant after field validation.
 	refs []employeeRef
-}
-
-func (v *validation) add(field, message string) {
-	v.errors = append(v.errors, apierror.FieldError{Field: field, Message: message})
-}
-
-func (v *validation) err() error {
-	if len(v.errors) == 0 {
-		return nil
-	}
-	return apierror.Validation(v.errors)
-}
-
-func (v *validation) length(field, value string, minRunes, maxRunes int, message string) {
-	if n := utf8.RuneCountInString(value); n < minRunes || n > maxRunes {
-		v.add(field, message)
-	}
 }
 
 // employee returns the canonical ID and queues it for the tenant check.
 func (v *validation) employee(field, value string) string {
 	id, err := uuid.Parse(strings.TrimSpace(value))
 	if err != nil {
-		v.add(field, msgNoEmployee)
+		v.Add(field, msgNoEmployee)
 		return ""
 	}
 	v.refs = append(v.refs, employeeRef{id: id.String(), field: field})
@@ -347,7 +330,7 @@ func (v *validation) employee(field, value string) string {
 func (v *validation) date(field, value string) time.Time {
 	date, err := time.Parse(time.DateOnly, value)
 	if err != nil {
-		v.add(field, msgDate)
+		v.Add(field, msgDate)
 		return time.Time{}
 	}
 	return date
@@ -361,7 +344,7 @@ func (v *validation) dates(path, startValue, endValue string) (time.Time, time.T
 		return time.Time{}, time.Time{}
 	}
 	if end.Before(start) {
-		v.add(path+"endDate", msgEndBeforeDate)
+		v.Add(path+"endDate", msgEndBeforeDate)
 		return time.Time{}, time.Time{}
 	}
 	return start, end
@@ -373,7 +356,7 @@ func (v *validation) within(field string, date, start, end time.Time, message st
 		return
 	}
 	if date.Before(start) || date.After(end) {
-		v.add(field, message)
+		v.Add(field, message)
 	}
 }
 
