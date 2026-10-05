@@ -19,6 +19,16 @@ go run cmd/api/main.go
 
 The API listens on `http://localhost:8080`. Check `GET /health` for the scaffold health response. Open `GET /docs` for Swagger UI over the REST contract in `pkg/apidocs/openapi.yaml` (raw file at `GET /openapi.yaml`); use **Authorize** with the `accessToken` from `/auth/login`. `.env.example` documents the app and adapter settings. Set `JWT_ENABLED=true` and a `JWT_SECRET` of at least 32 bytes when enabling JWT-protected routes. Production also requires Redis and explicit `TRUSTED_PROXIES` IPs/CIDRs for ingress client-IP rate limits. `ALLOWED_ORIGINS` overrides the default browser origins (`http://localhost:3000`, `http://localhost:5173`).
 
+## Create a candidate Admin
+
+With PostgreSQL running and `DB_ENABLED=true` in the environment or `.env`, run:
+
+```sh
+go run ./cmd/create-admin
+```
+
+The command prompts for the Admin's email and name, then asks for a password twice without echoing it. It generates a new candidate tenant UUID and creates an active Admin account in that tenant. Save the printed tenant ID with the candidate's setup information. Email addresses are globally unique; if an address is already used, the command exits without changing the existing account. The Admin can create Employees through the API after signing in.
+
 ## Project scope
 
 | Exercise | Capability | Main requirements |
@@ -31,7 +41,7 @@ A3 currently uses **project → phases → tasks** as its example domain; the fi
 
 ## Candidate workflow and data isolation
 
-1. The team provisions an admin account directly in the database, with a separate account recommended for each candidate.
+1. The team runs `go run ./cmd/create-admin` to create an admin account in a new candidate tenant, with a separate account recommended for each candidate.
 2. The candidate signs in as that admin and creates employees through A1. Each created employee receives a login account and a conversation with that admin.
 3. The candidate signs in as an employee in another browser session to test chat and employee permissions.
 4. The candidate submits the nested form and retrieves the saved data to verify it.
