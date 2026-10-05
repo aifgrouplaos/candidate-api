@@ -24,40 +24,50 @@ func (activeSessions) SessionActive(context.Context, string, string, string) (bo
 	return true, nil
 }
 
-func TestProjectRoutesContract(t *testing.T) {
+// routeClient sends authenticated requests to the Project routes backed by a memory repository.
+type routeClient struct {
+	t     *testing.T
+	app   *fiber.App
+	token contract.Token
+}
+
+func newRouteClient(t *testing.T) *routeClient {
 	token := jwt.New(config.JWT{Secret: "test-secret"})
 	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})
 	NewProjectHandler(NewProjectUsecase(newMemoryRepository())).RegisterRoutes(app, auth.Authentication(token, activeSessions{}))
-	bearer := func(p auth.Principal) string {
-		value, err := token.Sign(contract.Claims{"sub": p.UserID, "tenantId": p.TenantID, "role": string(p.Role), "sid": "s1"}, time.Minute)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return "Bearer " + value
+	return &routeClient{t: t, app: app, token: token}
+}
+
+func (c *routeClient) do(method, path, payload, key string, actor auth.Principal) (int, map[string]json.RawMessage) {
+	c.t.Helper()
+	bearer, err := c.token.Sign(contract.Claims{"sub": actor.UserID, "tenantId": actor.TenantID, "role": string(actor.Role), "sid": "s1"}, time.Minute)
+	if err != nil {
+		c.t.Fatal(err)
 	}
+	request := httptest.NewRequest(method, path, strings.NewReader(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+bearer)
+	if key != "" {
+		request.Header.Set("Idempotency-Key", key)
+	}
+	response, err := c.app.Test(request, -1)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer response.Body.Close()
+	raw, _ := io.ReadAll(response.Body)
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		c.t.Fatalf("%s %s: invalid JSON %s", method, path, raw)
+	}
+	return response.StatusCode, decoded
+}
+
+func TestProjectRoutesContract(t *testing.T) {
+	do := newRouteClient(t).do
 	body, err := json.Marshal(validInput())
 	if err != nil {
 		t.Fatal(err)
-	}
-	do := func(method, path, payload, key string, actor auth.Principal) (int, map[string]json.RawMessage) {
-		t.Helper()
-		request := httptest.NewRequest(method, path, strings.NewReader(payload))
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Authorization", bearer(actor))
-		if key != "" {
-			request.Header.Set("Idempotency-Key", key)
-		}
-		response, err := app.Test(request, -1)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer response.Body.Close()
-		raw, _ := io.ReadAll(response.Body)
-		var decoded map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &decoded); err != nil {
-			t.Fatalf("%s %s: invalid JSON %s", method, path, raw)
-		}
-		return response.StatusCode, decoded
 	}
 
 	status, created := do(http.MethodPost, "/projects", string(body), "key-1", adminA)
@@ -91,18 +101,11 @@ func TestProjectRoutesContract(t *testing.T) {
 		}
 	}
 
-	for path, want := range map[string]string{
-		"/projects?search=HR": `[{"id":"` + project.ID + `"`,
-		"/lookups/task-types": `["feature","bug"]`,
-		"/lookups/priorities": `["low","medium","high","critical"]`,
-	} {
-		status, got := do(http.MethodGet, path, "", "", employeeA)
-		if status != fiber.StatusOK || !strings.HasPrefix(string(got["data"]), want) || strings.Contains(string(got["data"]), `"phases"`) {
-			t.Errorf("%s: %d %s", path, status, got["data"])
-		}
-	}
-	if _, got := do(http.MethodGet, "/projects", "", "", employeeA); string(got["meta"]) != `{"page":1,"limit":20,"total":1,"totalPages":1}` {
-		t.Errorf("list meta = %s", got["meta"])
+	status, list := do(http.MethodGet, "/projects?search=HR", "", "", employeeA)
+	data := string(list["data"])
+	if status != fiber.StatusOK || !strings.HasPrefix(data, `[{"id":"`+project.ID+`"`) || strings.Contains(data, `"phases"`) ||
+		string(list["meta"]) != `{"page":1,"limit":20,"total":1,"totalPages":1}` {
+		t.Errorf("list: %d %s %s", status, data, list["meta"])
 	}
 
 	if status, got := do(http.MethodDelete, "/projects/"+project.ID, "", "", adminA); status != fiber.StatusOK || string(got["data"]) != "null" {
@@ -110,5 +113,17 @@ func TestProjectRoutesContract(t *testing.T) {
 	}
 	if status, _ := do(http.MethodGet, "/projects/"+project.ID, "", "", adminA); status != fiber.StatusNotFound {
 		t.Fatalf("get after delete: %d", status)
+	}
+}
+
+func TestLookupRoutes(t *testing.T) {
+	do := newRouteClient(t).do
+	for path, want := range map[string]string{
+		"/lookups/task-types": `["feature","bug"]`,
+		"/lookups/priorities": `["low","medium","high","critical"]`,
+	} {
+		if status, got := do(http.MethodGet, path, "", "", employeeA); status != fiber.StatusOK || string(got["data"]) != want {
+			t.Errorf("%s: %d %s", path, status, got["data"])
+		}
 	}
 }
