@@ -101,10 +101,9 @@ func run() error {
 		limiter = ratelimit.NewRedisStore(redisCache.Client())
 	}
 
-	app := newApp(cfg, trustedProxies, allowedOrigins, db, limiter, token)
+	app := newApp(cfg, trustedProxies, allowedOrigins, db, limiter, token, store)
 
 	_ = cache
-	_ = store
 
 	slog.Info("server starting",
 		"port", cfg.App.Port,
@@ -142,8 +141,8 @@ func skipRateLimits(env string) bool {
 func allowRequest(c *fiber.Ctx) error { return c.Next() }
 
 func validateConfig(cfg *config.Config, trustedProxies []string) error {
-	if cfg.App.Env == "production" && (!cfg.PostgresEnabled || !cfg.JWTEnabled || len([]byte(cfg.JWT.Secret)) < 32 || !cfg.RedisEnabled || len(trustedProxies) == 0) {
-		return errors.New("production requires PostgreSQL, Redis, trusted proxy addresses, JWT, and a JWT secret of at least 32 bytes")
+	if cfg.App.Env == "production" && (!cfg.PostgresEnabled || !cfg.JWTEnabled || len([]byte(cfg.JWT.Secret)) < 32 || !cfg.RedisEnabled || len(trustedProxies) == 0 || !cfg.MinIOEnabled) {
+		return errors.New("production requires PostgreSQL, Redis, trusted proxy addresses, JWT, a JWT secret of at least 32 bytes, and private object storage")
 	}
 	if !skipRateLimits(cfg.App.Env) && cfg.PostgresEnabled && cfg.JWTEnabled && !cfg.RedisEnabled {
 		return errors.New("Redis is required when authenticated API routes are enabled")
@@ -151,7 +150,7 @@ func validateConfig(cfg *config.Config, trustedProxies []string) error {
 	return nil
 }
 
-func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, db contract.ORM, limiter ratelimit.Store, token contract.Token) *fiber.App {
+func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, db contract.ORM, limiter ratelimit.Store, token contract.Token, store contract.Storage) *fiber.App {
 	app := fiber.New(fiber.Config{
 		AppName:                 cfg.App.Name,
 		EnableTrustedProxyCheck: true,
@@ -186,7 +185,7 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 		}
 		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(authRepository, token))
 		authHandler.RegisterRoutes(api, loginLimit, refreshLimit, protected...)
-		employee.NewEmployeeHandler(employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db))).RegisterRoutes(api, protected...)
+		employee.NewEmployeeHandler(employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db), store, cfg.MinIO.Bucket)).RegisterRoutes(api, protected...)
 	}
 	return app
 }

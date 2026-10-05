@@ -17,6 +17,20 @@ services:
     ports:
       - "6379:6379"
 
+  # Private S3-compatible storage. The API talks to it through the bkgo storage adapter.
+  rustfs:
+    image: rustfs/rustfs:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      RUSTFS_ACCESS_KEY: minioadmin
+      RUSTFS_SECRET_KEY: minioadmin
+      RUSTFS_ADDRESS: ":9000"
+    volumes:
+      - rustfs_data:/data
+    command: /data
+
 volumes:
   postgres_data:
-  minio_data:
+  rustfs_data:

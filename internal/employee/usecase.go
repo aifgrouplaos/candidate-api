@@ -1,15 +1,19 @@
 package employee
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/mail"
-	"net/url"
 	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
@@ -23,7 +27,15 @@ const (
 	defaultLimit    = 20
 	maxLimit        = 100
 	maxPage         = 10_000
+	maxAvatarBytes  = 2 << 20
+	// avatarURLExpiry is long enough for a page to load the image and short
+	// enough that clients must not store it as a permanent identifier.
+	avatarURLExpiry = 15 * time.Minute
 	msgStatus       = "Status must be active, inactive, or on_leave."
+	msgAvatarType   = "Avatar must be a JPG, PNG, or WebP image."
+	msgAvatarSize   = "Avatar must be 2 MB or smaller."
+	msgNoStorage    = "avatar storage is unavailable"
+	msgNoDepartment = "Department does not exist."
 )
 
 var (
@@ -99,21 +111,31 @@ type EmployeeView struct {
 	UpdatedAt    time.Time   `json:"updatedAt"`
 }
 
+// AvatarFile is one uploaded avatar. Size may be -1 when the caller does not know it.
+type AvatarFile struct {
+	ContentType string
+	Size        int64
+	Body        io.Reader
+}
+
 type EmployeeUsecase interface {
 	List(ctx context.Context, actor auth.Principal, query ListQuery) ([]*EmployeeView, PageMeta, error)
 	Get(ctx context.Context, actor auth.Principal, id string) (*EmployeeView, error)
 	Create(ctx context.Context, actor auth.Principal, input CreateEmployeeInput) (*EmployeeView, error)
 	Update(ctx context.Context, actor auth.Principal, id string, input UpdateEmployeeInput) (*EmployeeView, error)
+	UploadAvatar(ctx context.Context, actor auth.Principal, id string, file AvatarFile) (*EmployeeView, error)
 	Delete(ctx context.Context, actor auth.Principal, id string) error
 	Departments(ctx context.Context) ([]Department, error)
 }
 
 type employeeUsecase struct {
-	repo EmployeeRepository
+	repo   EmployeeRepository
+	files  contract.Storage
+	bucket string
 }
 
-func NewEmployeeUsecase(repo EmployeeRepository) EmployeeUsecase {
-	return &employeeUsecase{repo: repo}
+func NewEmployeeUsecase(repo EmployeeRepository, files contract.Storage, bucket string) EmployeeUsecase {
+	return &employeeUsecase{repo: repo, files: files, bucket: bucket}
 }
 
 func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query ListQuery) ([]*EmployeeView, PageMeta, error) {
@@ -167,7 +189,10 @@ func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query 
 	}
 	views := make([]*EmployeeView, len(employees))
 	for i, employee := range employees {
-		views[i] = view(employee)
+		views[i], err = u.present(ctx, employee)
+		if err != nil {
+			return nil, PageMeta{}, err
+		}
 	}
 	return views, PageMeta{Page: page, Limit: limit, Total: total, TotalPages: int((total + int64(limit) - 1) / int64(limit))}, nil
 }
@@ -177,7 +202,7 @@ func (u *employeeUsecase) Get(ctx context.Context, actor auth.Principal, id stri
 	if err != nil {
 		return nil, err
 	}
-	return view(employee), nil
+	return u.present(ctx, employee)
 }
 
 func (u *employeeUsecase) Create(ctx context.Context, actor auth.Principal, input CreateEmployeeInput) (*EmployeeView, error) {
@@ -229,7 +254,8 @@ func (u *employeeUsecase) Update(ctx context.Context, actor auth.Principal, id s
 	}
 	adminOnly := input.Email.Set || input.DepartmentID.Set || input.Position.Set || input.Status.Set || input.HireDate.Set
 	isAdmin := actor.Role == auth.RoleAdmin
-	if input.Role.Set || (isAdmin && input.AvatarURL.Set) || (!isAdmin && adminOnly) {
+	// avatarUrl is a presigned response field. Clients change the avatar through UploadAvatar.
+	if input.Role.Set || input.AvatarURL.Set || (!isAdmin && adminOnly) {
 		return nil, errForbidden
 	}
 	var v validation
@@ -254,9 +280,6 @@ func (u *employeeUsecase) Update(ctx context.Context, actor auth.Principal, id s
 	if input.HireDate.Set {
 		employee.HireDate = v.hireDate(input.HireDate.Value)
 	}
-	if input.AvatarURL.Set {
-		employee.AvatarURL = v.avatarURL(input.AvatarURL.Value)
-	}
 	if input.DepartmentID.Set {
 		if employee.DepartmentID, err = u.department(ctx, &v, input.DepartmentID.Value); err != nil {
 			return nil, err
@@ -267,6 +290,45 @@ func (u *employeeUsecase) Update(ctx context.Context, actor auth.Principal, id s
 	}
 	if err := u.repo.Update(ctx, employee, *input.Version); err != nil {
 		return nil, err
+	}
+	return u.Get(ctx, actor, employee.ID)
+}
+
+func (u *employeeUsecase) UploadAvatar(ctx context.Context, actor auth.Principal, id string, file AvatarFile) (*EmployeeView, error) {
+	employee, err := u.find(ctx, actor, id)
+	if err != nil {
+		return nil, err
+	}
+	if u.files == nil {
+		return nil, errs.Internal(msgNoStorage)
+	}
+	data, err := readAvatar(ctx, file)
+	if err != nil {
+		return nil, err
+	}
+	contentType, ext, ok := avatarType(file.ContentType, data)
+	if !ok {
+		return nil, avatarInvalid(msgAvatarType)
+	}
+	key := fmt.Sprintf("avatars/%s/%s/%s%s", employee.TenantID, employee.ID, uuid.NewString(), ext)
+	if _, err := u.files.Upload(ctx, u.bucket, key, bytes.NewReader(data), int64(len(data)), contentType); err != nil {
+		slog.Error("avatar upload failed", "error", err, "requestId", requestID(ctx))
+		return nil, errs.Internal("could not store the avatar")
+	}
+	previous := employee.AvatarURL
+	employee.AvatarURL = &key
+	if err := u.repo.Update(ctx, employee, employee.Version); err != nil {
+		if delErr := u.files.Delete(ctx, u.bucket, key); delErr != nil {
+			slog.Error("avatar cleanup failed", "error", delErr, "requestId", requestID(ctx))
+		}
+		return nil, err
+	}
+	if old, ok := avatarObjectKey(employee.TenantID, previous); ok && old != key {
+		// ponytail: a failed delete leaves the previous object in the private bucket.
+		// The Employee already points at the new key; the next replacement deletes this one.
+		if err := u.files.Delete(ctx, u.bucket, old); err != nil {
+			slog.Error("previous avatar delete failed", "error", err, "requestId", requestID(ctx))
+		}
 	}
 	return u.Get(ctx, actor, employee.ID)
 }
@@ -307,7 +369,7 @@ func (u *employeeUsecase) department(ctx context.Context, v *validation, value *
 		return nil, nil
 	}
 	if _, err := uuid.Parse(*value); err != nil {
-		v.add("departmentId", "Department does not exist.")
+		v.add("departmentId", msgNoDepartment)
 		return value, nil
 	}
 	exists, err := u.repo.DepartmentExists(ctx, *value)
@@ -315,9 +377,30 @@ func (u *employeeUsecase) department(ctx context.Context, v *validation, value *
 		return nil, err
 	}
 	if !exists {
-		v.add("departmentId", "Department does not exist.")
+		v.add("departmentId", msgNoDepartment)
 	}
 	return value, nil
+}
+
+// present returns a view whose avatarUrl is a presigned download URL.
+// The stored object key is not a client-facing identifier.
+func (u *employeeUsecase) present(ctx context.Context, e *Employee) (*EmployeeView, error) {
+	result := view(e)
+	result.AvatarURL = nil
+	key, ok := avatarObjectKey(e.TenantID, e.AvatarURL)
+	if !ok {
+		return result, nil
+	}
+	if u.files == nil {
+		return nil, errs.Internal(msgNoStorage)
+	}
+	url, err := u.files.URL(ctx, u.bucket, key, avatarURLExpiry)
+	if err != nil {
+		slog.Error("avatar url failed", "error", err, "requestId", requestID(ctx))
+		return nil, errs.Internal("could not authorize the avatar download")
+	}
+	result.AvatarURL = &url
+	return result, nil
 }
 
 func view(e *Employee) *EmployeeView {
@@ -420,16 +503,62 @@ func (v *validation) hireDate(value *string) *time.Time {
 	return &date
 }
 
-func (v *validation) avatarURL(value *string) *string {
-	value = optional(value)
-	if value == nil {
-		return nil
+func readAvatar(ctx context.Context, file AvatarFile) ([]byte, error) {
+	if file.Size > maxAvatarBytes {
+		return nil, avatarInvalid(msgAvatarSize)
 	}
-	parsed, err := url.Parse(*value)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || len(*value) > 2048 {
-		v.add("avatarUrl", "Avatar URL must be an https URL.")
+	if file.Body == nil {
+		return nil, avatarInvalid(msgAvatarType)
 	}
-	return value
+	data, err := io.ReadAll(io.LimitReader(file.Body, maxAvatarBytes+1))
+	if err != nil {
+		slog.Error("avatar read failed", "error", err, "requestId", requestID(ctx))
+		return nil, errs.Internal("could not read the avatar")
+	}
+	if len(data) > maxAvatarBytes {
+		return nil, avatarInvalid(msgAvatarSize)
+	}
+	return data, nil
+}
+
+func avatarInvalid(message string) error {
+	return apierror.Validation([]apierror.FieldError{{Field: "file", Message: message}})
+}
+
+// avatarObjectKey accepts only keys this API generated for the Employee's tenant.
+func avatarObjectKey(tenantID string, value *string) (string, bool) {
+	if value == nil || tenantID == "" {
+		return "", false
+	}
+	key := *value
+	if !strings.HasPrefix(key, "avatars/"+tenantID+"/") || strings.Contains(key, "..") || strings.Contains(key, `\`) {
+		return "", false
+	}
+	return key, true
+}
+
+func avatarType(declared string, data []byte) (contentType, ext string, ok bool) {
+	declared = strings.ToLower(strings.TrimSpace(declared))
+	if i := strings.Index(declared, ";"); i >= 0 {
+		declared = strings.TrimSpace(declared[:i])
+	}
+	switch {
+	case bytes.HasPrefix(data, []byte{0xFF, 0xD8, 0xFF}):
+		contentType, ext = "image/jpeg", ".jpg"
+	case bytes.HasPrefix(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}):
+		contentType, ext = "image/png", ".png"
+	case len(data) >= 12 && bytes.Equal(data[0:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")):
+		contentType, ext = "image/webp", ".webp"
+	default:
+		return "", "", false
+	}
+	if declared == "image/jpg" {
+		declared = "image/jpeg"
+	}
+	if declared != contentType {
+		return "", "", false
+	}
+	return contentType, ext, true
 }
 
 // optional trims a nullable string and treats blank as null.

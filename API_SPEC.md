@@ -47,7 +47,7 @@ Before merging API changes, review the applicable OWASP risks: broken object/pro
 - Every access token is bound to its refresh-token session, and each authenticated request checks that the session and user remain active. Logout revokes that session immediately; disabling an account or resetting a tenant revokes all affected sessions. A rotated or revoked refresh token cannot be reused.
 - Outside `development`, count every login request toward these initial limits: 10 per account and 100 per source IP in a sliding 15-minute window; 30 refresh attempts per source IP per minute; and 100 authenticated requests per user per minute. Enforce the IP buckets only with the remote address or a forwarded address received from a configured trusted proxy. Never reveal which bucket caused a rejection.
 - Roles are `admin` and `employee`. The API never accepts a caller-supplied role when creating an Employee.
-- Admins can manage Employees and tenant-owned records in their own candidate tenant only. Employees can read their own profile and update only `fullName`, `phone`, and `avatarUrl`.
+- Admins can manage Employees and tenant-owned records in their own candidate tenant only. Employees can read their own profile, update only `fullName` and `phone`, and upload their own avatar.
 - Admin accounts cannot be created, edited, have their role changed, or be deleted through this API.
 - Every owner, assignee, conversation, file, and Project lookup is checked against the authenticated tenant. Cross-tenant access is denied.
 
@@ -130,9 +130,9 @@ Errors have this shape, and `requestId` matches the `X-Request-Id` response head
 | `GET /employees` | Admin | Paginated tenant Employee list. Query: `page`, `limit`, `search` (name/email/code), `departmentId`, comma-separated `status`, `sortBy` (`fullName`, `hireDate`, `createdAt`), `sortOrder` (`asc`, `desc`). |
 | `GET /employees/{id}` | Admin or that Employee | Reads an Employee in the caller's tenant; Employees may read only themselves. |
 | `POST /employees` | Admin | Creates an Employee and its login account atomically, plus that Employee's one-to-one chat conversation. The request includes Employee fields and `password`; the role is always `employee`. If the email belongs to a Deleted Employee in the same tenant, that Employee is restored instead: the create body replaces profile fields and the password, the previous avatar is kept, `version` increments, and the response is still `201` with the original `id`. |
-| `PATCH /employees/{id}` | Admin or that Employee | Admin may update `fullName`, `email`, `phone`, `departmentId`, `position`, `status`, and `hireDate`. An Employee may update only `fullName`, `phone`, and `avatarUrl`. Neither role may change `role` through this endpoint. Include the current `version`; a stale version returns `409 VERSION_CONFLICT`. |
+| `PATCH /employees/{id}` | Admin or that Employee | Admin may update `fullName`, `email`, `phone`, `departmentId`, `position`, `status`, and `hireDate`. An Employee may update only `fullName` and `phone`. Neither role may change `role` or `avatarUrl` through this endpoint. Include the current `version`; a stale version returns `409 VERSION_CONFLICT`. |
 | `DELETE /employees/{id}` | Admin | Soft-deletes/disables the Employee login and retains the Employee record and chat history. Admin accounts cannot be deleted. |
-| `POST /employees/{id}/avatar` | Admin or that Employee | Uploads `multipart/form-data`, maximum 2 MB, JPG/PNG/WebP. The API validates content and authorization before writing to private RustFS. |
+| `POST /employees/{id}/avatar` | Admin or that Employee | Uploads `multipart/form-data` field `file`, maximum 2 MB, JPG/PNG/WebP. The API validates content and authorization before writing to private RustFS, stores the object key, and replaces any previous avatar object. The response `avatarUrl` is a short-lived presigned download URL. |
 | `GET /departments` | Authenticated | Returns the shared department lookup list. |
 
 `POST /employees` request example:

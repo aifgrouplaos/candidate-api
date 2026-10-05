@@ -8,7 +8,7 @@ The repository contains the assessment materials and an initialized Go API scaff
 
 ## Run locally
 
-Requires Go 1.22+ and Docker Compose. The scaffold uses Fiber and PostgreSQL; PostgreSQL is enabled by default. Redis is required when authentication routes are enabled, except an explicit `APP_ENV=development`, which skips rate limits. MinIO and JWT remain optional for local development.
+Requires Go 1.22+ and Docker Compose. The scaffold uses Fiber and PostgreSQL; PostgreSQL is enabled by default. Redis is required when authentication routes are enabled, except an explicit `APP_ENV=development`, which skips rate limits. JWT remains optional for local development. Avatar upload uses a private RustFS bucket: `docker compose up -d rustfs` and `MINIO_ENABLED=true` point the storage adapter at its S3 API.
 
 ```sh
 cp .env.example .env
@@ -17,7 +17,7 @@ go mod tidy
 go run cmd/api/main.go
 ```
 
-The API listens on `http://localhost:8080`. Check `GET /health` for the scaffold health response. Open `GET /docs` for Swagger UI over the REST contract in `pkg/apidocs/openapi.yaml` (raw file at `GET /openapi.yaml`); use **Authorize** with the `accessToken` from `/auth/login`. `.env.example` documents the app and adapter settings. Set `JWT_ENABLED=true` and a `JWT_SECRET` of at least 32 bytes when enabling JWT-protected routes. Production also requires Redis and explicit `TRUSTED_PROXIES` IPs/CIDRs for ingress client-IP rate limits. `ALLOWED_ORIGINS` overrides the default browser origins (`http://localhost:3000`, `http://localhost:5173`).
+The API listens on `http://localhost:8080`. Check `GET /health` for the scaffold health response. Open `GET /docs` for Swagger UI over the REST contract in `pkg/apidocs/openapi.yaml` (raw file at `GET /openapi.yaml`); use **Authorize** with the `accessToken` from `/auth/login`. `.env.example` documents the app and adapter settings. Set `JWT_ENABLED=true` and a `JWT_SECRET` of at least 32 bytes when enabling JWT-protected routes. Production also requires Redis, private object storage (`MINIO_ENABLED=true`), and explicit `TRUSTED_PROXIES` IPs/CIDRs for ingress client-IP rate limits. `ALLOWED_ORIGINS` overrides the default browser origins (`http://localhost:3000`, `http://localhost:5173`).
 
 ## Create a candidate Admin
 

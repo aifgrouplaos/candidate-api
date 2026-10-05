@@ -36,7 +36,7 @@ func (rejectStore) Hit(context.Context, string, int64, time.Duration) (bool, tim
 func TestDevelopmentRegistersAuthRoutesWithoutLimiter(t *testing.T) {
 	t.Setenv("APP_ENV", "development")
 	cfg := &config.Config{App: config.App{Env: "development"}, PostgresEnabled: true, JWTEnabled: true}
-	app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{})
+	app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{}, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
 	req.Header.Set("Content-Type", "application/json")
 	res, err := app.Test(req)
@@ -49,7 +49,7 @@ func TestDevelopmentRegistersAuthRoutesWithoutLimiter(t *testing.T) {
 	}
 
 	cfg.App.Env = "staging"
-	app = newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{})
+	app = newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{}, nil)
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
 	req.Header.Set("Content-Type", "application/json")
 	res, err = app.Test(req)
@@ -67,7 +67,7 @@ func TestDevelopmentDoesNotRateLimitAuthRoutes(t *testing.T) {
 		t.Run(env, func(t *testing.T) {
 			t.Setenv("APP_ENV", env)
 			cfg := &config.Config{App: config.App{Env: env}, PostgresEnabled: true, JWTEnabled: true}
-			app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{})
+			app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{}, nil)
 			for _, path := range []string{"/api/v1/auth/login", "/api/v1/auth/refresh"} {
 				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{"))
 				req.Header.Set("Content-Type", "application/json")
@@ -99,7 +99,7 @@ func TestUnsetAppEnvKeepsRateLimits(t *testing.T) {
 	if err := validateConfig(cfg, nil); err == nil {
 		t.Fatal("blank APP_ENV was treated as development and allowed to start without Redis")
 	}
-	app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{})
+	app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{}, nil)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
 	req.Header.Set("Content-Type", "application/json")
 	res, err := app.Test(req)
@@ -133,6 +133,23 @@ func TestDevelopmentAllowsAuthenticatedRoutesWithoutRedis(t *testing.T) {
 		if err := validateConfig(cfg, proxies); err == nil {
 			t.Fatalf("%q without Redis was accepted", env)
 		}
+	}
+}
+
+func TestProductionRequiresObjectStorage(t *testing.T) {
+	cfg := &config.Config{
+		App:             config.App{Env: "production"},
+		PostgresEnabled: true,
+		JWTEnabled:      true,
+		JWT:             config.JWT{Secret: strings.Repeat("k", 32)},
+		RedisEnabled:    true,
+	}
+	if err := validateConfig(cfg, []string{"10.0.0.1"}); err == nil {
+		t.Fatal("production without object storage was accepted")
+	}
+	cfg.MinIOEnabled = true
+	if err := validateConfig(cfg, []string{"10.0.0.1"}); err != nil {
+		t.Fatal(err)
 	}
 }
 
