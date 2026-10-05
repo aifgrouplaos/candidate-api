@@ -1,6 +1,8 @@
 // Package utils provides domain-independent helpers. Business rules belong in internal modules.
 package utils
 
+import "strings"
+
 // Coalesce returns the first non-zero value, or the zero value if none is provided.
 func Coalesce[T comparable](values ...T) T {
 	var zero T
@@ -27,4 +29,16 @@ func Unique[T comparable](values []T) []T {
 		}
 	}
 	return result
+}
+
+// Optional trims a nullable string and treats blank as null.
+func Optional(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }

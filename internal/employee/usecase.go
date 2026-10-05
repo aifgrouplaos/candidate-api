@@ -144,12 +144,10 @@ func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query 
 	}
 	var v validation
 	filter := ListFilter{TenantID: actor.TenantID, Search: strings.TrimSpace(query.Search), SortBy: SortCreatedAt}
-	if utf8.RuneCountInString(filter.Search) > 100 {
-		v.add("search", "Search must be at most 100 characters.")
-	}
+	v.Length("search", filter.Search, 0, 100, "Search must be at most 100 characters.")
 	if query.DepartmentID != "" {
 		if _, err := uuid.Parse(query.DepartmentID); err != nil {
-			v.add("departmentId", "Department ID is invalid.")
+			v.Add("departmentId", "Department ID is invalid.")
 		}
 		filter.DepartmentID = query.DepartmentID
 	}
@@ -161,19 +159,19 @@ func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query 
 	case "hireDate":
 		filter.SortBy = SortHireDate
 	default:
-		v.add("sortBy", "Sort must be fullName, hireDate, or createdAt.")
+		v.Add("sortBy", "Sort must be fullName, hireDate, or createdAt.")
 	}
 	switch query.SortOrder {
 	case "", "asc":
 	case "desc":
 		filter.Desc = true
 	default:
-		v.add("sortOrder", "Sort order must be asc or desc.")
+		v.Add("sortOrder", "Sort order must be asc or desc.")
 	}
 	if query.Page > maxPage {
-		v.add("page", "Page is too large.")
+		v.Add("page", "Page is too large.")
 	}
-	if err := v.err(); err != nil {
+	if err := v.Err(); err != nil {
 		return nil, PageMeta{}, err
 	}
 	page, limit := max(query.Page, 1), query.Limit
@@ -223,14 +221,14 @@ func (u *employeeUsecase) Create(ctx context.Context, actor auth.Principal, inpu
 		employee.Status = v.status(input.Status)
 	}
 	if utf8.RuneCountInString(input.Password) < 8 || len(input.Password) > 72 {
-		v.add("password", "Password must be at least 8 characters and at most 72 bytes.")
+		v.Add("password", "Password must be at least 8 characters and at most 72 bytes.")
 	}
 	departmentID, err := u.department(ctx, &v, input.DepartmentID)
 	if err != nil {
 		return nil, err
 	}
 	employee.DepartmentID = departmentID
-	if err := v.err(); err != nil {
+	if err := v.Err(); err != nil {
 		return nil, err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
@@ -260,7 +258,7 @@ func (u *employeeUsecase) Update(ctx context.Context, actor auth.Principal, id s
 	}
 	var v validation
 	if input.Version == nil {
-		v.add("version", "Version is required.")
+		v.Add("version", "Version is required.")
 	}
 	if input.FullName.Set {
 		employee.FullName = v.fullName(input.FullName.Value)
@@ -285,7 +283,7 @@ func (u *employeeUsecase) Update(ctx context.Context, actor auth.Principal, id s
 			return nil, err
 		}
 	}
-	if err := v.err(); err != nil {
+	if err := v.Err(); err != nil {
 		return nil, err
 	}
 	if err := u.repo.Update(ctx, employee, *input.Version); err != nil {
@@ -364,12 +362,12 @@ func (u *employeeUsecase) find(ctx context.Context, actor auth.Principal, id str
 }
 
 func (u *employeeUsecase) department(ctx context.Context, v *validation, value *string) (*string, error) {
-	value = optional(value)
+	value = utils.Optional(value)
 	if value == nil {
 		return nil, nil
 	}
 	if _, err := uuid.Parse(*value); err != nil {
-		v.add("departmentId", msgNoDepartment)
+		v.Add("departmentId", msgNoDepartment)
 		return value, nil
 	}
 	exists, err := u.repo.DepartmentExists(ctx, *value)
@@ -377,7 +375,7 @@ func (u *employeeUsecase) department(ctx context.Context, v *validation, value *
 		return nil, err
 	}
 	if !exists {
-		v.add("departmentId", msgNoDepartment)
+		v.Add("departmentId", msgNoDepartment)
 	}
 	return value, nil
 }
@@ -416,24 +414,11 @@ func view(e *Employee) *EmployeeView {
 	return result
 }
 
-type validation []apierror.FieldError
-
-func (v *validation) add(field, message string) {
-	*v = append(*v, apierror.FieldError{Field: field, Message: message})
-}
-
-func (v validation) err() error {
-	if len(v) == 0 {
-		return nil
-	}
-	return apierror.Validation(v)
-}
+type validation struct{ apierror.FieldErrors }
 
 func (v *validation) fullName(value string) string {
 	value = strings.TrimSpace(value)
-	if n := utf8.RuneCountInString(value); n < 2 || n > 100 {
-		v.add("fullName", "Full name must be 2–100 characters.")
-	}
+	v.Length("fullName", value, 2, 100, "Full name must be 2–100 characters.")
 	return value
 }
 
@@ -441,30 +426,30 @@ func (v *validation) email(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	parsed, err := mail.ParseAddress(value)
 	if err != nil || parsed.Address != value || len(value) > 254 {
-		v.add("email", "A valid email is required.")
+		v.Add("email", "A valid email is required.")
 	}
 	return value
 }
 
 func (v *validation) phone(value *string) *string {
-	value = optional(value)
+	value = utils.Optional(value)
 	if value != nil && !phonePattern.MatchString(*value) {
-		v.add("phone", "A valid phone number is required.")
+		v.Add("phone", "A valid phone number is required.")
 	}
 	return value
 }
 
 func (v *validation) position(value *string) *string {
-	value = optional(value)
-	if value != nil && utf8.RuneCountInString(*value) > 100 {
-		v.add("position", "Position must be at most 100 characters.")
+	value = utils.Optional(value)
+	if value != nil {
+		v.Length("position", *value, 0, 100, "Position must be at most 100 characters.")
 	}
 	return value
 }
 
 func (v *validation) status(value Status) Status {
 	if !value.Valid() {
-		v.add("status", msgStatus)
+		v.Add("status", msgStatus)
 	}
 	return value
 }
@@ -478,7 +463,7 @@ func (v *validation) statuses(value string) []Status {
 			continue
 		}
 		if !status.Valid() {
-			v.add("status", msgStatus)
+			v.Add("status", msgStatus)
 			break
 		}
 		result = append(result, status)
@@ -487,18 +472,18 @@ func (v *validation) statuses(value string) []Status {
 }
 
 func (v *validation) hireDate(value *string) *time.Time {
-	value = optional(value)
+	value = utils.Optional(value)
 	if value == nil {
 		return nil
 	}
 	date, err := time.Parse(time.DateOnly, *value)
 	if err != nil {
-		v.add("hireDate", "Hire date must be a YYYY-MM-DD date.")
+		v.Add("hireDate", "Hire date must be a YYYY-MM-DD date.")
 		return nil
 	}
 	// UTC+14 is the earliest time zone, so this accepts any date that is already today somewhere.
 	if date.After(time.Now().UTC().Add(14 * time.Hour)) {
-		v.add("hireDate", "Hire date cannot be in the future.")
+		v.Add("hireDate", "Hire date cannot be in the future.")
 	}
 	return &date
 }
@@ -559,16 +544,4 @@ func avatarType(declared string, data []byte) (contentType, ext string, ok bool)
 		return "", "", false
 	}
 	return contentType, ext, true
-}
-
-// optional trims a nullable string and treats blank as null.
-func optional(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	trimmed := strings.TrimSpace(*value)
-	if trimmed == "" {
-		return nil
-	}
-	return &trimmed
 }

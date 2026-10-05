@@ -5,6 +5,7 @@ package apierror
 
 import (
 	"net/http"
+	"unicode/utf8"
 
 	"github.com/BounkhongDev/bkgo/errs"
 )
@@ -24,4 +25,26 @@ type FieldError struct {
 
 func Validation(details []FieldError) *errs.AppError {
 	return &errs.AppError{Status: http.StatusUnprocessableEntity, Code: "VALIDATION_ERROR", Message: "The request is invalid.", Data: details}
+}
+
+// FieldErrors collects every invalid field of a request so it is reported at once.
+type FieldErrors []FieldError
+
+func (e *FieldErrors) Add(field, message string) {
+	*e = append(*e, FieldError{Field: field, Message: message})
+}
+
+// Length adds message unless value has minRunes to maxRunes runes.
+func (e *FieldErrors) Length(field, value string, minRunes, maxRunes int, message string) {
+	if n := utf8.RuneCountInString(value); n < minRunes || n > maxRunes {
+		e.Add(field, message)
+	}
+}
+
+// Err returns a VALIDATION_ERROR for the collected fields, or nil when there are none.
+func (e FieldErrors) Err() error {
+	if len(e) == 0 {
+		return nil
+	}
+	return Validation(e)
 }
