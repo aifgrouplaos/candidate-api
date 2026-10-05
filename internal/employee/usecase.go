@@ -550,15 +550,10 @@ func avatarType(declared string, data []byte) (contentType, ext string, ok bool)
 	default:
 		return "", "", false
 	}
-	switch declared {
-	case "image/jpeg", "image/jpg":
-		ok = contentType == "image/jpeg"
-	case "image/png":
-		ok = contentType == "image/png"
-	case "image/webp":
-		ok = contentType == "image/webp"
+	if declared == "image/jpg" {
+		declared = "image/jpeg"
 	}
-	if !ok {
+	if declared != contentType {
 		return "", "", false
 	}
 	return contentType, ext, true
