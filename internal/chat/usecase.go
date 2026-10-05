@@ -160,6 +160,16 @@ func (u *chatUsecase) Messages(ctx context.Context, reader auth.Principal, id st
 	if err != nil {
 		return nil, MessageMeta{}, err
 	}
+	messages, meta := messagePage(messages, limit, query)
+	views := make([]*MessageView, len(messages))
+	for i, message := range messages {
+		views[i] = messageView(message)
+	}
+	return views, meta, nil
+}
+
+// messagePage trims the extra row fetched past limit and describes what lies beyond the page.
+func messagePage(messages []*Message, limit int, query MessageQuery) ([]*Message, MessageMeta) {
 	more := len(messages) > limit
 	if more && query.After != "" {
 		messages = messages[:limit]
@@ -176,11 +186,7 @@ func (u *chatUsecase) Messages(ctx context.Context, reader auth.Principal, id st
 	} else if meta.HasMoreBefore {
 		meta.NextBefore = &query.After
 	}
-	views := make([]*MessageView, len(messages))
-	for i, message := range messages {
-		views[i] = messageView(message)
-	}
-	return views, meta, nil
+	return messages, meta
 }
 
 func (u *chatUsecase) present(ctx context.Context, c *Conversation) (*ConversationView, error) {
