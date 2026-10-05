@@ -14,6 +14,7 @@ import (
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
+	"github.com/aifgrouplaos/candidate-api/pkg/pagination"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -279,7 +280,7 @@ func TestListNormalizesQuery(t *testing.T) {
 	repo := newMemoryRepository()
 	uc := NewEmployeeUsecase(repo, nil, "")
 	_, meta, err := uc.List(context.Background(), adminA, ListQuery{
-		Page: 0, Limit: 500, Search: "  Som  ", DepartmentID: departmentIT,
+		Query: pagination.Query{Page: 0, Limit: 500, Search: "  Som  "}, DepartmentID: departmentIT,
 		Status: "active, on_leave,active", SortBy: "fullName", SortOrder: "desc",
 	})
 	if err != nil {
@@ -294,7 +295,7 @@ func TestListNormalizesQuery(t *testing.T) {
 	if meta.Page != 1 || meta.Limit != 100 || meta.Total != 2 || meta.TotalPages != 1 {
 		t.Fatalf("meta = %+v", meta)
 	}
-	if _, _, err := uc.List(context.Background(), adminA, ListQuery{Page: 3, Limit: 10}); err != nil || repo.lastFilter.Offset != 20 || repo.lastFilter.SortBy != SortCreatedAt {
+	if _, _, err := uc.List(context.Background(), adminA, ListQuery{Query: pagination.Query{Page: 3, Limit: 10}}); err != nil || repo.lastFilter.Offset != 20 || repo.lastFilter.SortBy != SortCreatedAt {
 		t.Fatalf("defaults: filter %+v err %v", repo.lastFilter, err)
 	}
 	_, _, err = uc.List(context.Background(), adminA, ListQuery{Status: "active,fired", SortBy: "password", SortOrder: "up", DepartmentID: "IT"})

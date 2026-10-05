@@ -14,6 +14,7 @@ import (
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
+	"github.com/aifgrouplaos/candidate-api/pkg/pagination"
 	"github.com/aifgrouplaos/candidate-api/pkg/utils"
 	"github.com/google/uuid"
 )
@@ -60,18 +61,25 @@ type TaskInput struct {
 	Severity      *Severity `json:"severity"`
 }
 
+// ProjectSummary is a list item; GET /projects/{id} returns the Phases and Tasks.
+type ProjectSummary struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Code        string    `json:"code"`
+	Description *string   `json:"description"`
+	OwnerID     string    `json:"ownerId"`
+	StartDate   string    `json:"startDate"`
+	EndDate     string    `json:"endDate"`
+	TotalPhases int       `json:"totalPhases"`
+	TotalTasks  int       `json:"totalTasks"`
+	Version     int       `json:"version"`
+	CreatedAt   time.Time `json:"createdAt"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
 type ProjectView struct {
-	ID          string      `json:"id"`
-	Name        string      `json:"name"`
-	Code        string      `json:"code"`
-	Description *string     `json:"description"`
-	OwnerID     string      `json:"ownerId"`
-	StartDate   string      `json:"startDate"`
-	EndDate     string      `json:"endDate"`
-	Phases      []PhaseView `json:"phases"`
-	Version     int         `json:"version"`
-	CreatedAt   time.Time   `json:"createdAt"`
-	UpdatedAt   time.Time   `json:"updatedAt"`
+	ProjectSummary
+	Phases []PhaseView `json:"phases"`
 }
 
 type PhaseView struct {
@@ -99,6 +107,8 @@ type ProjectUsecase interface {
 	// with the same payload returns the original Project.
 	Create(ctx context.Context, actor auth.Principal, idempotencyKey string, input CreateProjectInput) (*ProjectView, error)
 	Get(ctx context.Context, actor auth.Principal, id string) (*ProjectView, error)
+	List(ctx context.Context, actor auth.Principal, query pagination.Query) ([]*ProjectSummary, pagination.Meta, error)
+	Delete(ctx context.Context, actor auth.Principal, id string) error
 }
 
 type projectUsecase struct {
@@ -158,6 +168,37 @@ func (u *projectUsecase) Get(ctx context.Context, actor auth.Principal, id strin
 		return nil, err
 	}
 	return view(project), nil
+}
+
+// List, like Get, shows every Project in the tenant to any authenticated user.
+func (u *projectUsecase) List(ctx context.Context, actor auth.Principal, query pagination.Query) ([]*ProjectSummary, pagination.Meta, error) {
+	if !actor.Role.Valid() || actor.TenantID == "" {
+		return nil, pagination.Meta{}, errForbidden
+	}
+	var v validation
+	filter := ListFilter{TenantID: actor.TenantID, Search: query.Check(&v.FieldErrors)}
+	if err := v.Err(); err != nil {
+		return nil, pagination.Meta{}, err
+	}
+	page, limit, offset := query.Bounds()
+	filter.Offset, filter.Limit = offset, limit
+
+	projects, total, err := u.repo.List(ctx, filter)
+	if err != nil {
+		return nil, pagination.Meta{}, err
+	}
+	summaries := make([]*ProjectSummary, len(projects))
+	for i, p := range projects {
+		summaries[i] = summary(p)
+	}
+	return summaries, pagination.NewMeta(page, limit, total), nil
+}
+
+func (u *projectUsecase) Delete(ctx context.Context, actor auth.Principal, id string) error {
+	if actor.Role != auth.RoleAdmin {
+		return errForbidden
+	}
+	return u.repo.Delete(ctx, actor.TenantID, id)
 }
 
 // replay returns the Project created with key, or nil when the tenant has not used key.
@@ -283,14 +324,20 @@ func (u *projectUsecase) checkEmployees(ctx context.Context, v *validation, tena
 	return nil
 }
 
-func view(p *Project) *ProjectView {
-	result := &ProjectView{
+func summary(p *Project) *ProjectSummary {
+	return &ProjectSummary{
 		ID: p.ID, Name: p.Name, Code: p.Code, Description: p.Description, OwnerID: p.OwnerID,
 		StartDate: p.StartDate.Format(time.DateOnly), EndDate: p.EndDate.Format(time.DateOnly),
-		Phases: make([]PhaseView, len(p.Phases)), Version: p.Version,
-		CreatedAt: p.CreatedAt.UTC(), UpdatedAt: p.UpdatedAt.UTC(),
+		TotalPhases: p.TotalPhases, TotalTasks: p.TotalTasks,
+		Version: p.Version, CreatedAt: p.CreatedAt.UTC(), UpdatedAt: p.UpdatedAt.UTC(),
 	}
+}
+
+func view(p *Project) *ProjectView {
+	result := &ProjectView{ProjectSummary: *summary(p), Phases: make([]PhaseView, len(p.Phases))}
+	result.TotalPhases, result.TotalTasks = len(p.Phases), 0
 	for i, phase := range p.Phases {
+		result.TotalTasks += len(phase.Tasks)
 		tasks := make([]TaskView, len(phase.Tasks))
 		for j, t := range phase.Tasks {
 			tasks[j] = TaskView{

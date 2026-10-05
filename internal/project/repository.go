@@ -7,6 +7,7 @@ import (
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/employee"
+	"github.com/aifgrouplaos/candidate-api/pkg/utils"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
@@ -39,6 +40,35 @@ func (r *projectRepository) FindByID(ctx context.Context, tenantID, id string) (
 		return nil, errNotFound
 	}
 	return project, err
+}
+
+func (r *projectRepository) List(ctx context.Context, filter ListFilter) ([]*Project, int64, error) {
+	query := r.db.Session(ctx).Model(&Project{}).Where("tenant_id = ?", filter.TenantID)
+	if filter.Search != "" {
+		pattern := utils.ContainsPattern(filter.Search)
+		query = query.Where("(name ILIKE ? OR code ILIKE ?)", pattern, pattern)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	projects := []*Project{}
+	err := query.Select(`projects.*,
+		(SELECT COUNT(*) FROM project_phases ph WHERE ph.project_id = projects.id) AS total_phases,
+		(SELECT COUNT(*) FROM project_tasks t JOIN project_phases ph ON ph.id = t.phase_id WHERE ph.project_id = projects.id) AS total_tasks`).
+		Order("created_at DESC").Order("id DESC").Offset(filter.Offset).Limit(filter.Limit).Find(&projects).Error
+	return projects, total, err
+}
+
+func (r *projectRepository) Delete(ctx context.Context, tenantID, id string) error {
+	if _, err := uuid.Parse(id); err != nil {
+		return errNotFound
+	}
+	result := r.db.Session(ctx).Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&Project{})
+	if result.Error == nil && result.RowsAffected == 0 {
+		return errNotFound
+	}
+	return result.Error
 }
 
 func (r *projectRepository) FindByIdempotencyKey(ctx context.Context, tenantID, key string) (*Project, error) {
