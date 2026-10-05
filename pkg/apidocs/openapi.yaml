@@ -815,7 +815,7 @@ components:
         tasks: { type: array, minItems: 1, maxItems: 100, items: { $ref: '#/components/schemas/CreateTask' } }
     Project:
       type: object
-      required: [id, name, code, ownerId, startDate, endDate, phases, version, createdAt, updatedAt]
+      required: [id, name, code, ownerId, startDate, endDate, totalPhases, totalTasks, phases, version, createdAt, updatedAt]
       properties:
         id: { type: string, readOnly: true }
         name: { type: string, minLength: 3, maxLength: 100 }
@@ -824,6 +824,8 @@ components:
         ownerId: { type: string }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date }
+        totalPhases: { type: integer, minimum: 1 }
+        totalTasks: { type: integer, minimum: 1 }
         phases: { type: array, minItems: 1, maxItems: 20, items: { $ref: '#/components/schemas/Phase' } }
         version: { type: integer, minimum: 1 }
         createdAt: { type: string, format: date-time }
@@ -841,7 +843,7 @@ components:
         phases: { type: array, minItems: 1, maxItems: 20, items: { $ref: '#/components/schemas/CreatePhase' } }
     ProjectSummary:
       type: object
-      required: [id, name, code, description, ownerId, startDate, endDate, version, createdAt, updatedAt]
+      required: [id, name, code, description, ownerId, startDate, endDate, totalPhases, totalTasks, version, createdAt, updatedAt]
       properties:
         id: { type: string }
         name: { type: string }
@@ -850,6 +852,8 @@ components:
         ownerId: { type: string }
         startDate: { type: string, format: date }
         endDate: { type: string, format: date }
+        totalPhases: { type: integer, minimum: 0 }
+        totalTasks: { type: integer, minimum: 0 }
         version: { type: integer, minimum: 1 }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }

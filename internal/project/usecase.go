@@ -70,6 +70,8 @@ type ProjectSummary struct {
 	OwnerID     string    `json:"ownerId"`
 	StartDate   string    `json:"startDate"`
 	EndDate     string    `json:"endDate"`
+	TotalPhases int       `json:"totalPhases"`
+	TotalTasks  int       `json:"totalTasks"`
 	Version     int       `json:"version"`
 	CreatedAt   time.Time `json:"createdAt"`
 	UpdatedAt   time.Time `json:"updatedAt"`
@@ -326,13 +328,16 @@ func summary(p *Project) *ProjectSummary {
 	return &ProjectSummary{
 		ID: p.ID, Name: p.Name, Code: p.Code, Description: p.Description, OwnerID: p.OwnerID,
 		StartDate: p.StartDate.Format(time.DateOnly), EndDate: p.EndDate.Format(time.DateOnly),
+		TotalPhases: p.TotalPhases, TotalTasks: p.TotalTasks,
 		Version: p.Version, CreatedAt: p.CreatedAt.UTC(), UpdatedAt: p.UpdatedAt.UTC(),
 	}
 }
 
 func view(p *Project) *ProjectView {
 	result := &ProjectView{ProjectSummary: *summary(p), Phases: make([]PhaseView, len(p.Phases))}
+	result.TotalPhases, result.TotalTasks = len(p.Phases), 0
 	for i, phase := range p.Phases {
+		result.TotalTasks += len(phase.Tasks)
 		tasks := make([]TaskView, len(phase.Tasks))
 		for j, t := range phase.Tasks {
 			tasks[j] = TaskView{

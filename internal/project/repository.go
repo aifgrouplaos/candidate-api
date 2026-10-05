@@ -53,7 +53,10 @@ func (r *projectRepository) List(ctx context.Context, filter ListFilter) ([]*Pro
 		return nil, 0, err
 	}
 	projects := []*Project{}
-	err := query.Order("created_at DESC").Order("id DESC").Offset(filter.Offset).Limit(filter.Limit).Find(&projects).Error
+	err := query.Select(`projects.*,
+		(SELECT COUNT(*) FROM project_phases ph WHERE ph.project_id = projects.id) AS total_phases,
+		(SELECT COUNT(*) FROM project_tasks t JOIN project_phases ph ON ph.id = t.phase_id WHERE ph.project_id = projects.id) AS total_tasks`).
+		Order("created_at DESC").Order("id DESC").Offset(filter.Offset).Limit(filter.Limit).Find(&projects).Error
 	return projects, total, err
 }
 

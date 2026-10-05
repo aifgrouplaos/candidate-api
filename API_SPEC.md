@@ -252,7 +252,7 @@ Dates are inclusive `YYYY-MM-DD` values. A Phase's dates must fit within its Pro
 | Method and path | Access | Contract |
 | --- | --- | --- |
 | `POST /projects` | Admin | Creates Project, Phases, and Tasks atomically. Requires `Idempotency-Key`. |
-| `GET /projects` | Authenticated | Returns only Projects in the caller's tenant, newest first, paginated (`page`, `limit`), with optional `search` (name/code). Items are summaries without Phases and Tasks. |
+| `GET /projects` | Authenticated | Returns only Projects in the caller's tenant, newest first, paginated (`page`, `limit`), with optional `search` (name/code). Items are summaries without Phases and Tasks, with `totalPhases` and `totalTasks` counts. |
 | `GET /projects/{id}` | Authenticated | Returns the tenant Project with all Phases and Tasks. |
 | `DELETE /projects/{id}` | Admin | Permanently deletes a tenant Project and its Phases and Tasks for assessment cleanup. |
 | `GET /lookups/task-types` | Authenticated | Returns task type choices. |

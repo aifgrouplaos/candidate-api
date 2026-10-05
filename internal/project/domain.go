@@ -62,6 +62,9 @@ type Project struct {
 	Version        int       `gorm:"not null;default:1"`
 	CreatedAt      time.Time `gorm:"autoCreateTime"`
 	UpdatedAt      time.Time `gorm:"autoUpdateTime"`
+	// TotalPhases and TotalTasks are computed by List only; they are not stored.
+	TotalPhases int `gorm:"->;-:migration"`
+	TotalTasks  int `gorm:"->;-:migration"`
 }
 
 func (Project) TableName() string { return "projects" }
@@ -106,8 +109,8 @@ type ListFilter struct {
 }
 
 type ProjectRepository interface {
-	// List returns one page of tenantID's Projects, newest first, without Phases, plus the
-	// total number of matches.
+	// List returns one page of tenantID's Projects, newest first, without Phases but with
+	// TotalPhases and TotalTasks, plus the total number of matches.
 	List(ctx context.Context, filter ListFilter) ([]*Project, int64, error)
 	// FindByID returns NOT_FOUND unless the Project exists in tenantID. Phases are sorted
 	// by Order; Tasks keep their submitted order.

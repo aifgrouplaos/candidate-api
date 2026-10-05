@@ -42,7 +42,11 @@ func (r *memoryRepository) List(_ context.Context, filter ListFilter) ([]*Projec
 	var matches []*Project
 	for _, p := range r.projects {
 		if p.TenantID == filter.TenantID {
-			matches = append(matches, p)
+			item := &Project{ID: p.ID, TenantID: p.TenantID, OwnerID: p.OwnerID, StartDate: p.StartDate, TotalPhases: len(p.Phases)}
+			for _, phase := range p.Phases {
+				item.TotalTasks += len(phase.Tasks)
+			}
+			matches = append(matches, item)
 		}
 	}
 	page := matches[min(filter.Offset, len(matches)):min(filter.Offset+filter.Limit, len(matches))]
@@ -156,7 +160,7 @@ func TestCreateReturnsNestedProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID == "" || got.OwnerID != ownerA || got.StartDate != "2026-11-01" || got.Version != 1 || len(got.Phases) != 1 {
+	if got.ID == "" || got.OwnerID != ownerA || got.StartDate != "2026-11-01" || got.Version != 1 || len(got.Phases) != 1 || got.TotalPhases != 1 || got.TotalTasks != 2 {
 		t.Fatalf("project = %+v", got)
 	}
 	phase := got.Phases[0]
@@ -347,7 +351,7 @@ func TestListIsTenantScopedAndPaged(t *testing.T) {
 	}
 
 	got, meta, err := u.List(ctx, employeeA, pagination.Query{Page: 2, Limit: 2, Search: "  HR  "})
-	if err != nil || len(got) != 1 || got[0].OwnerID != ownerA || got[0].StartDate != "2026-11-01" {
+	if err != nil || len(got) != 1 || got[0].OwnerID != ownerA || got[0].StartDate != "2026-11-01" || got[0].TotalPhases != 1 || got[0].TotalTasks != 2 {
 		t.Fatalf("list = %+v, err %v", got, err)
 	}
 	if want := (ListFilter{TenantID: tenantA, Search: "HR", Offset: 2, Limit: 2}); repo.lastFilter != want {

@@ -133,7 +133,7 @@ func (f *repoFixture) testList(t *testing.T) {
 			if p.Phases != nil {
 				t.Fatalf("%s loaded phases", p.Code)
 			}
-			got = append(got, p.Code)
+			got = append(got, fmt.Sprintf("%s:%d/%d", p.Code, p.TotalPhases, p.TotalTasks))
 		}
 		return got, total
 	}
@@ -142,10 +142,10 @@ func (f *repoFixture) testList(t *testing.T) {
 		want   []string
 		total  int64
 	}{
-		{ListFilter{Limit: 10}, []string{"PRJ-RACE", "PRJ-1"}, 2},
-		{ListFilter{Offset: 1, Limit: 1}, []string{"PRJ-1"}, 2},
-		{ListFilter{Search: "race", Limit: 10}, []string{"PRJ-RACE"}, 1},
-		{ListFilter{Search: "project prj-1", Limit: 10}, []string{"PRJ-1"}, 1},
+		{ListFilter{Limit: 10}, []string{"PRJ-RACE:1/1", "PRJ-1:5/500"}, 2},
+		{ListFilter{Offset: 1, Limit: 1}, []string{"PRJ-1:5/500"}, 2},
+		{ListFilter{Search: "race", Limit: 10}, []string{"PRJ-RACE:1/1"}, 1},
+		{ListFilter{Search: "project prj-1", Limit: 10}, []string{"PRJ-1:5/500"}, 1},
 		{ListFilter{Search: "%", Limit: 10}, nil, 0},
 	} {
 		if got, total := codes(c.filter); !reflect.DeepEqual(got, c.want) || total != c.total {
