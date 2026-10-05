@@ -123,7 +123,7 @@ func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
 		return nil, fmt.Errorf("postgres connect failed: %w", err)
 	}
 	if err := gormDB.Raw().AutoMigrate(&auth.User{}, &auth.AuthSession{}, &auth.RefreshToken{}, &employee.Department{}, &employee.Employee{},
-		&project.Project{}, &project.Phase{}, &project.Task{}, &project.IdempotencyKey{}); err != nil {
+		&project.Project{}, &project.Phase{}, &project.Task{}); err != nil {
 		gormDB.Close()
 		return nil, fmt.Errorf("automigrate failed: %w", err)
 	}

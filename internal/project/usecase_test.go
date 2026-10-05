@@ -28,16 +28,14 @@ var (
 
 type memoryRepository struct {
 	projects map[string]*Project
-	keys     map[string]*IdempotencyKey
 	active   map[string]string // employee ID -> tenant ID
-	// keyRace makes the next Create act as if a concurrent request stored this key first.
-	keyRace *IdempotencyKey
+	// keyRace makes the next Create act as if a concurrent request stored this Project first.
+	keyRace *Project
 }
 
 func newMemoryRepository() *memoryRepository {
 	return &memoryRepository{
 		projects: map[string]*Project{},
-		keys:     map[string]*IdempotencyKey{},
 		active:   map[string]string{ownerA: tenantA, assigneeA: tenantA, employeeB: tenantB},
 	}
 }
@@ -50,8 +48,13 @@ func (r *memoryRepository) FindByID(_ context.Context, tenantID, id string) (*Pr
 	return p, nil
 }
 
-func (r *memoryRepository) FindIdempotencyKey(_ context.Context, tenantID, key string) (*IdempotencyKey, error) {
-	return r.keys[tenantID+"/"+key], nil
+func (r *memoryRepository) FindByIdempotencyKey(_ context.Context, tenantID, key string) (*Project, error) {
+	for _, p := range r.projects {
+		if p.TenantID == tenantID && p.IdempotencyKey == key {
+			return p, nil
+		}
+	}
+	return nil, nil
 }
 
 func (r *memoryRepository) ActiveEmployeeIDs(_ context.Context, tenantID string, ids []string) (map[string]bool, error) {
@@ -64,11 +67,11 @@ func (r *memoryRepository) ActiveEmployeeIDs(_ context.Context, tenantID string,
 	return result, nil
 }
 
-func (r *memoryRepository) Create(_ context.Context, p *Project, key *IdempotencyKey) error {
+func (r *memoryRepository) Create(_ context.Context, p *Project) error {
 	if r.keyRace != nil {
-		r.keys[r.keyRace.TenantID+"/"+r.keyRace.Key], r.keyRace = r.keyRace, nil
+		r.projects[r.keyRace.ID], r.keyRace = r.keyRace, nil
 	}
-	if r.keys[key.TenantID+"/"+key.Key] != nil {
+	if used, _ := r.FindByIdempotencyKey(context.Background(), p.TenantID, p.IdempotencyKey); used != nil {
 		return errKeyUsed
 	}
 	p.ID = fmt.Sprintf("p%d", len(r.projects)+1)
@@ -79,9 +82,7 @@ func (r *memoryRepository) Create(_ context.Context, p *Project, key *Idempotenc
 			p.Phases[i].Tasks[j].ID = fmt.Sprintf("%s-ph%d-t%d", p.ID, i, j)
 		}
 	}
-	key.ProjectID = p.ID
 	r.projects[p.ID] = p
-	r.keys[key.TenantID+"/"+key.Key] = key
 	return nil
 }
 
@@ -269,18 +270,16 @@ func TestCreateIsIdempotent(t *testing.T) {
 }
 
 func TestCreateReplaysKeyStoredByConcurrentRequest(t *testing.T) {
-	repo := newMemoryRepository()
-	u := NewProjectUsecase(repo)
 	ctx := context.Background()
-	original, err := u.Create(ctx, adminA, "original", validInput())
+	winner := newMemoryRepository()
+	original, err := NewProjectUsecase(winner).Create(ctx, adminA, "race", validInput())
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored := *repo.keys[tenantA+"/original"]
-	stored.Key = "race"
-	repo.keyRace = &stored
+	repo := newMemoryRepository()
+	repo.keyRace = winner.projects[original.ID]
 
-	got, err := u.Create(ctx, adminA, "race", validInput())
+	got, err := NewProjectUsecase(repo).Create(ctx, adminA, "race", validInput())
 	if err != nil || got.ID != original.ID || len(repo.projects) != 1 {
 		t.Fatalf("got %v, err %v, stored %d", got, err, len(repo.projects))
 	}

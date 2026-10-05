@@ -41,19 +41,22 @@ func (s Severity) Valid() bool {
 }
 
 // Project is a tenant record; OwnerID references an Employee in the same tenant.
+// IdempotencyKey and RequestHash record the POST /projects request that created it.
 type Project struct {
-	ID          string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	TenantID    string `gorm:"type:uuid;not null;uniqueIndex:idx_projects_tenant_code"`
-	Code        string `gorm:"not null;uniqueIndex:idx_projects_tenant_code"`
-	Name        string `gorm:"not null"`
-	Description *string
-	OwnerID     string    `gorm:"type:uuid;not null;index"`
-	StartDate   time.Time `gorm:"type:date;not null"`
-	EndDate     time.Time `gorm:"type:date;not null"`
-	Phases      []Phase   `gorm:"constraint:OnDelete:CASCADE"`
-	Version     int       `gorm:"not null;default:1"`
-	CreatedAt   time.Time `gorm:"autoCreateTime"`
-	UpdatedAt   time.Time `gorm:"autoUpdateTime"`
+	ID             string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	TenantID       string `gorm:"type:uuid;not null;uniqueIndex:idx_projects_tenant_code;uniqueIndex:idx_projects_tenant_idempotency_key"`
+	Code           string `gorm:"not null;uniqueIndex:idx_projects_tenant_code"`
+	IdempotencyKey string `gorm:"not null;uniqueIndex:idx_projects_tenant_idempotency_key"`
+	RequestHash    string `gorm:"not null"`
+	Name           string `gorm:"not null"`
+	Description    *string
+	OwnerID        string    `gorm:"type:uuid;not null;index"`
+	StartDate      time.Time `gorm:"type:date;not null"`
+	EndDate        time.Time `gorm:"type:date;not null"`
+	Phases         []Phase   `gorm:"constraint:OnDelete:CASCADE"`
+	Version        int       `gorm:"not null;default:1"`
+	CreatedAt      time.Time `gorm:"autoCreateTime"`
+	UpdatedAt      time.Time `gorm:"autoUpdateTime"`
 }
 
 func (Project) TableName() string { return "projects" }
@@ -88,31 +91,19 @@ type Task struct {
 
 func (Task) TableName() string { return "project_tasks" }
 
-// IdempotencyKey records the Project created by a tenant's POST /projects Idempotency-Key.
-type IdempotencyKey struct {
-	TenantID    string    `gorm:"primaryKey;type:uuid"`
-	Key         string    `gorm:"primaryKey"`
-	RequestHash string    `gorm:"not null"`
-	ProjectID   string    `gorm:"type:uuid;not null;index"`
-	Project     *Project  `gorm:"constraint:OnDelete:CASCADE"`
-	CreatedAt   time.Time `gorm:"autoCreateTime"`
-}
-
-func (IdempotencyKey) TableName() string { return "project_idempotency_keys" }
-
-// errKeyUsed means another submission already stored the tenant's Idempotency-Key.
+// errKeyUsed means another Project in the tenant already has the Idempotency-Key.
 var errKeyUsed = errors.New("idempotency key already used")
 
 type ProjectRepository interface {
 	// FindByID returns NOT_FOUND unless the Project exists in tenantID. Phases and Tasks
 	// keep their submitted order.
 	FindByID(ctx context.Context, tenantID, id string) (*Project, error)
-	// FindIdempotencyKey returns nil when tenantID has not used key.
-	FindIdempotencyKey(ctx context.Context, tenantID, key string) (*IdempotencyKey, error)
+	// FindByIdempotencyKey is FindByID by key, but returns nil when tenantID has not used key.
+	FindByIdempotencyKey(ctx context.Context, tenantID, key string) (*Project, error)
 	// ActiveEmployeeIDs returns which ids are active, non-deleted Employees in tenantID.
 	ActiveEmployeeIDs(ctx context.Context, tenantID string, ids []string) (map[string]bool, error)
-	// Create stores the Project, its Phases and Tasks, and key in one transaction and sets
-	// key.ProjectID. It returns errKeyUsed when the tenant already used key, and CONFLICT
-	// when the tenant already has a Project with the code.
-	Create(ctx context.Context, project *Project, key *IdempotencyKey) error
+	// Create stores the Project with its Phases and Tasks in one transaction. It returns
+	// errKeyUsed when the tenant already used project.IdempotencyKey, and CONFLICT when the
+	// tenant already has a Project with the code.
+	Create(ctx context.Context, project *Project) error
 }

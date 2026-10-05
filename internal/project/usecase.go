@@ -122,20 +122,21 @@ func (u *projectUsecase) Create(ctx context.Context, actor auth.Principal, idemp
 		return nil, err
 	}
 	sum := sha256.Sum256(payload)
-	key := &IdempotencyKey{TenantID: actor.TenantID, Key: idempotencyKey, RequestHash: hex.EncodeToString(sum[:])}
+	requestHash := hex.EncodeToString(sum[:])
 
 	// Replay before validating so a retry still returns the original Project after,
 	// for example, its owner was deleted.
-	if view, err := u.replay(ctx, actor, key); view != nil || err != nil {
+	if view, err := u.replay(ctx, actor.TenantID, idempotencyKey, requestHash); view != nil || err != nil {
 		return view, err
 	}
 	project, err := u.build(ctx, actor.TenantID, input)
 	if err != nil {
 		return nil, err
 	}
-	err = u.repo.Create(ctx, project, key)
+	project.IdempotencyKey, project.RequestHash = idempotencyKey, requestHash
+	err = u.repo.Create(ctx, project)
 	if errors.Is(err, errKeyUsed) {
-		view, err := u.replay(ctx, actor, key)
+		view, err := u.replay(ctx, actor.TenantID, idempotencyKey, requestHash)
 		if view == nil && err == nil {
 			err = errs.Conflict("The idempotency key is already in use.")
 		}
@@ -159,16 +160,16 @@ func (u *projectUsecase) Get(ctx context.Context, actor auth.Principal, id strin
 	return view(project), nil
 }
 
-// replay returns the Project stored for key, or nil when the tenant has not used key.
-func (u *projectUsecase) replay(ctx context.Context, actor auth.Principal, key *IdempotencyKey) (*ProjectView, error) {
-	used, err := u.repo.FindIdempotencyKey(ctx, key.TenantID, key.Key)
-	if err != nil || used == nil {
+// replay returns the Project created with key, or nil when the tenant has not used key.
+func (u *projectUsecase) replay(ctx context.Context, tenantID, key, requestHash string) (*ProjectView, error) {
+	project, err := u.repo.FindByIdempotencyKey(ctx, tenantID, key)
+	if err != nil || project == nil {
 		return nil, err
 	}
-	if used.RequestHash != key.RequestHash {
+	if project.RequestHash != requestHash {
 		return nil, apierror.IdempotencyConflict
 	}
-	return u.Get(ctx, actor, used.ProjectID)
+	return view(project), nil
 }
 
 // build validates input and returns the Project to store, reporting every invalid field.

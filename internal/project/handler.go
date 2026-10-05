@@ -1,6 +1,8 @@
 package project
 
 import (
+	"strings"
+
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
@@ -26,7 +28,8 @@ func (h *ProjectHandler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return errs.ErrBadRequest
 	}
-	result, err := h.usecase.Create(c.UserContext(), principal(c), c.Get("Idempotency-Key"), input)
+	// Clone because fasthttp reuses the header buffer after the request, and the key is stored.
+	result, err := h.usecase.Create(c.UserContext(), principal(c), strings.Clone(c.Get("Idempotency-Key")), input)
 	if err != nil {
 		return err
 	}

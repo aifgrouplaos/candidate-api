@@ -16,6 +16,7 @@ const (
 	uniqueViolation  = "23505"
 	tenantCodeIndex  = "idx_projects_tenant_code"
 	byPositionClause = "position"
+	whereTenantKey   = "tenant_id = ? AND idempotency_key = ?"
 )
 
 var errNotFound = *errs.NotFound("Project not found.")
@@ -32,23 +33,27 @@ func (r *projectRepository) FindByID(ctx context.Context, tenantID, id string) (
 	if _, err := uuid.Parse(id); err != nil {
 		return nil, errNotFound
 	}
-	byPosition := func(db *gorm.DB) *gorm.DB { return db.Order(byPositionClause) }
-	var project Project
-	err := r.db.Session(ctx).Preload("Phases", byPosition).Preload("Phases.Tasks", byPosition).
-		Where("id = ? AND tenant_id = ?", id, tenantID).First(&project).Error
+	project, err := r.find(ctx, "id = ? AND tenant_id = ?", id, tenantID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, errNotFound
 	}
-	return &project, err
+	return project, err
 }
 
-func (r *projectRepository) FindIdempotencyKey(ctx context.Context, tenantID, key string) (*IdempotencyKey, error) {
-	var found IdempotencyKey
-	err := r.db.Session(ctx).Where("tenant_id = ? AND key = ?", tenantID, key).First(&found).Error
+func (r *projectRepository) FindByIdempotencyKey(ctx context.Context, tenantID, key string) (*Project, error) {
+	project, err := r.find(ctx, whereTenantKey, tenantID, key)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
-	return &found, err
+	return project, err
+}
+
+func (r *projectRepository) find(ctx context.Context, where string, args ...any) (*Project, error) {
+	byPosition := func(db *gorm.DB) *gorm.DB { return db.Order(byPositionClause) }
+	var project Project
+	err := r.db.Session(ctx).Preload("Phases", byPosition).Preload("Phases.Tasks", byPosition).
+		Where(where, args...).First(&project).Error
+	return &project, err
 }
 
 func (r *projectRepository) ActiveEmployeeIDs(ctx context.Context, tenantID string, ids []string) (map[string]bool, error) {
@@ -63,25 +68,21 @@ func (r *projectRepository) ActiveEmployeeIDs(ctx context.Context, tenantID stri
 	return active, err
 }
 
-func (r *projectRepository) Create(ctx context.Context, project *Project, key *IdempotencyKey) error {
+func (r *projectRepository) Create(ctx context.Context, project *Project) error {
 	err := r.db.Transaction(ctx, func(tx *gorm.DB) error {
 		// Serializes submissions that share a key, so a retry racing the original waits and
 		// then replays it instead of failing on the Project code.
-		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "projects:"+key.TenantID+":"+key.Key).Error; err != nil {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "projects:"+project.TenantID+":"+project.IdempotencyKey).Error; err != nil {
 			return err
 		}
 		var used int64
-		if err := tx.Model(&IdempotencyKey{}).Where("tenant_id = ? AND key = ?", key.TenantID, key.Key).Count(&used).Error; err != nil {
+		if err := tx.Model(&Project{}).Where(whereTenantKey, project.TenantID, project.IdempotencyKey).Count(&used).Error; err != nil {
 			return err
 		}
 		if used != 0 {
 			return errKeyUsed
 		}
-		if err := tx.Create(project).Error; err != nil {
-			return err
-		}
-		key.ProjectID = project.ID
-		return tx.Create(key).Error
+		return tx.Create(project).Error
 	})
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation && pgErr.ConstraintName == tenantCodeIndex {

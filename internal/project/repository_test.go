@@ -39,7 +39,7 @@ func newTestDB(t *testing.T) *gormadapter.DB {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := db.Raw().AutoMigrate(&employee.Department{}, &employee.Employee{}, &Project{}, &Phase{}, &Task{}, &IdempotencyKey{}); err != nil {
+	if err := db.Raw().AutoMigrate(&employee.Department{}, &employee.Employee{}, &Project{}, &Phase{}, &Task{}); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -59,9 +59,9 @@ func seedEmployee(t *testing.T, db *gormadapter.DB, id, tenantID string, status 
 }
 
 // storedProject builds a Project with phases × tasksPerPhase Tasks, all assigned to ownerA.
-func storedProject(code string, phases, tasksPerPhase int) *Project {
+func storedProject(code, key string, phases, tasksPerPhase int) *Project {
 	day := func(d int) time.Time { return time.Date(2026, 11, d, 0, 0, 0, 0, time.UTC) }
-	p := &Project{TenantID: tenantA, Code: code, Name: "Project " + code, OwnerID: ownerA, StartDate: day(1), EndDate: day(30)}
+	p := &Project{TenantID: tenantA, Code: code, IdempotencyKey: key, RequestHash: "h", Name: "Project " + code, OwnerID: ownerA, StartDate: day(1), EndDate: day(30)}
 	for i := 0; i < phases; i++ {
 		phase := Phase{Position: i, Order: phases - i, Name: fmt.Sprintf("Phase %d", i), StartDate: day(1), EndDate: day(30)}
 		for j := 0; j < tasksPerPhase; j++ {
@@ -75,10 +75,10 @@ func storedProject(code string, phases, tasksPerPhase int) *Project {
 	return p
 }
 
-func rowCounts(t *testing.T, db *gormadapter.DB) [4]int64 {
+func rowCounts(t *testing.T, db *gormadapter.DB) [3]int64 {
 	t.Helper()
-	var counts [4]int64
-	for i, model := range []any{&Project{}, &Phase{}, &Task{}, &IdempotencyKey{}} {
+	var counts [3]int64
+	for i, model := range []any{&Project{}, &Phase{}, &Task{}} {
 		if err := db.Raw().Model(model).Count(&counts[i]).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -102,13 +102,9 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 		}
 	})
 
-	project := storedProject("PRJ-1", 5, 100)
-	key := &IdempotencyKey{TenantID: tenantA, Key: "k1", RequestHash: "h1"}
-	if err := repo.Create(ctx, project, key); err != nil {
+	project := storedProject("PRJ-1", "k1", 5, 100)
+	if err := repo.Create(ctx, project); err != nil {
 		t.Fatal(err)
-	}
-	if key.ProjectID != project.ID {
-		t.Fatalf("key project = %q, want %q", key.ProjectID, project.ID)
 	}
 
 	t.Run("reads back 500 tasks in submitted order", func(t *testing.T) {
@@ -133,41 +129,41 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 		}
 	})
 
-	t.Run("finds the stored key per tenant", func(t *testing.T) {
-		found, err := repo.FindIdempotencyKey(ctx, tenantA, "k1")
-		if err != nil || found == nil || found.ProjectID != project.ID || found.RequestHash != "h1" {
+	t.Run("finds the project by key per tenant", func(t *testing.T) {
+		found, err := repo.FindByIdempotencyKey(ctx, tenantA, "k1")
+		if err != nil || found == nil || found.ID != project.ID || found.RequestHash != "h" || len(found.Phases[4].Tasks) != 100 {
 			t.Fatalf("found = %+v, err %v", found, err)
 		}
-		if found, err := repo.FindIdempotencyKey(ctx, tenantB, "k1"); found != nil || err != nil {
+		if found, err := repo.FindByIdempotencyKey(ctx, tenantB, "k1"); found != nil || err != nil {
 			t.Fatalf("other tenant = %+v, err %v", found, err)
 		}
 	})
 
 	t.Run("reused key stores nothing", func(t *testing.T) {
 		before := rowCounts(t, db)
-		err := repo.Create(ctx, storedProject("PRJ-2", 1, 1), &IdempotencyKey{TenantID: tenantA, Key: "k1", RequestHash: "other"})
+		err := repo.Create(ctx, storedProject("PRJ-2", "k1", 1, 1))
 		if !errors.Is(err, errKeyUsed) || rowCounts(t, db) != before {
 			t.Fatalf("err %v, counts %v -> %v", err, before, rowCounts(t, db))
 		}
 	})
 
 	t.Run("duplicate code conflicts only within the tenant", func(t *testing.T) {
-		err := repo.Create(ctx, storedProject("PRJ-1", 1, 1), &IdempotencyKey{TenantID: tenantA, Key: "k2", RequestHash: "h"})
+		err := repo.Create(ctx, storedProject("PRJ-1", "k2", 1, 1))
 		if errorCode(err) != "CONFLICT" {
 			t.Fatalf("same tenant: %v", err)
 		}
-		other := storedProject("PRJ-1", 1, 1)
+		other := storedProject("PRJ-1", "k2", 1, 1)
 		other.TenantID = tenantB
-		if err := repo.Create(ctx, other, &IdempotencyKey{TenantID: tenantB, Key: "k2", RequestHash: "h"}); err != nil {
+		if err := repo.Create(ctx, other); err != nil {
 			t.Fatalf("other tenant: %v", err)
 		}
 	})
 
 	t.Run("a failing task rolls back the whole submission", func(t *testing.T) {
 		before := rowCounts(t, db)
-		broken := storedProject("PRJ-ATOMIC", 5, 100)
+		broken := storedProject("PRJ-ATOMIC", "atomic", 5, 100)
 		broken.Phases[4].Tasks[99].AssigneeID = "not-a-uuid"
-		err := repo.Create(ctx, broken, &IdempotencyKey{TenantID: tenantA, Key: "atomic", RequestHash: "h"})
+		err := repo.Create(ctx, broken)
 		if err == nil || rowCounts(t, db) != before {
 			t.Fatalf("err %v, counts %v -> %v", err, before, rowCounts(t, db))
 		}
@@ -181,7 +177,7 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				results[i] = repo.Create(ctx, storedProject("PRJ-RACE", 1, 1), &IdempotencyKey{TenantID: tenantA, Key: "race", RequestHash: "h"})
+				results[i] = repo.Create(ctx, storedProject("PRJ-RACE", "race", 1, 1))
 			}(i)
 		}
 		wg.Wait()
