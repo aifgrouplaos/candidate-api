@@ -207,7 +207,6 @@ func (u *projectUsecase) build(ctx context.Context, tenantID string, input Creat
 // phase validates the Phase at index i and its Tasks; orders tracks Orders already used in the Project.
 func (v *validation) phase(phase *Phase, i int, in PhaseInput, project *Project, orders map[int]bool) {
 	path := fmt.Sprintf("phases[%d].", i)
-	phase.Position = i
 	phase.Name = strings.TrimSpace(in.Name)
 	v.Length(path+"name", phase.Name, 1, 100, "Name is required and must be at most 100 characters.")
 	switch {

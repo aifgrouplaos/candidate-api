@@ -15,6 +15,7 @@ import (
 const (
 	uniqueViolation  = "23505"
 	tenantCodeIndex  = "idx_projects_tenant_code"
+	bySortOrder      = "sort_order"
 	byPositionClause = "position"
 	whereTenantKey   = "tenant_id = ? AND idempotency_key = ?"
 )
@@ -49,9 +50,10 @@ func (r *projectRepository) FindByIdempotencyKey(ctx context.Context, tenantID, 
 }
 
 func (r *projectRepository) find(ctx context.Context, where string, args ...any) (*Project, error) {
+	byOrder := func(db *gorm.DB) *gorm.DB { return db.Order(bySortOrder) }
 	byPosition := func(db *gorm.DB) *gorm.DB { return db.Order(byPositionClause) }
 	var project Project
-	err := r.db.Session(ctx).Preload("Phases", byPosition).Preload("Phases.Tasks", byPosition).
+	err := r.db.Session(ctx).Preload("Phases", byOrder).Preload("Phases.Tasks", byPosition).
 		Where(where, args...).First(&project).Error
 	return &project, err
 }

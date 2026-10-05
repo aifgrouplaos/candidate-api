@@ -61,11 +61,9 @@ type Project struct {
 
 func (Project) TableName() string { return "projects" }
 
-// Phase keeps Position, its index in the submitted array, so reads return the submitted order.
 type Phase struct {
 	ID        string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
 	ProjectID string    `gorm:"type:uuid;not null;index"`
-	Position  int       `gorm:"not null"`
 	Order     int       `gorm:"column:sort_order;not null"`
 	Name      string    `gorm:"not null"`
 	StartDate time.Time `gorm:"type:date;not null"`
@@ -95,8 +93,8 @@ func (Task) TableName() string { return "project_tasks" }
 var errKeyUsed = errors.New("idempotency key already used")
 
 type ProjectRepository interface {
-	// FindByID returns NOT_FOUND unless the Project exists in tenantID. Phases and Tasks
-	// keep their submitted order.
+	// FindByID returns NOT_FOUND unless the Project exists in tenantID. Phases are sorted
+	// by Order; Tasks keep their submitted order.
 	FindByID(ctx context.Context, tenantID, id string) (*Project, error)
 	// FindByIdempotencyKey is FindByID by key, but returns nil when tenantID has not used key.
 	FindByIdempotencyKey(ctx context.Context, tenantID, key string) (*Project, error)

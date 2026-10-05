@@ -63,7 +63,7 @@ func storedProject(code, key string, phases, tasksPerPhase int) *Project {
 	day := func(d int) time.Time { return time.Date(2026, 11, d, 0, 0, 0, 0, time.UTC) }
 	p := &Project{TenantID: tenantA, Code: code, IdempotencyKey: key, RequestHash: "h", Name: "Project " + code, OwnerID: ownerA, StartDate: day(1), EndDate: day(30)}
 	for i := 0; i < phases; i++ {
-		phase := Phase{Position: i, Order: phases - i, Name: fmt.Sprintf("Phase %d", i), StartDate: day(1), EndDate: day(30)}
+		phase := Phase{Order: phases - i, Name: fmt.Sprintf("Phase %d", i), StartDate: day(1), EndDate: day(30)}
 		for j := 0; j < tasksPerPhase; j++ {
 			phase.Tasks = append(phase.Tasks, Task{
 				Position: j, Title: fmt.Sprintf("Task %d.%d", i, j), Type: TaskBug, Priority: PriorityLow,
@@ -108,7 +108,7 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Run("reads back 500 tasks in submitted order", f.testReadBackOrder)
+	t.Run("reads back phases by order and 500 tasks in submitted order", f.testReadBackOrder)
 	t.Run("other tenants and malformed IDs are not found", f.testNotFound)
 	t.Run("finds the project by key per tenant", f.testFindByKey)
 	t.Run("reused key stores nothing", f.testReusedKey)
@@ -129,10 +129,10 @@ func (f *repoFixture) testReadBackOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != 1 || len(got.Phases) != 5 || got.Phases[0].Order != 5 || got.Phases[4].Name != "Phase 4" {
+	if got.Version != 1 || len(got.Phases) != 5 || got.Phases[0].Order != 1 || got.Phases[0].Name != "Phase 4" || got.Phases[4].Name != "Phase 0" {
 		t.Fatalf("project = %+v", got)
 	}
-	tasks := got.Phases[4].Tasks
+	tasks := got.Phases[0].Tasks
 	if len(tasks) != 100 || tasks[99].Title != "Task 4.99" || tasks[0].ID == "" || *tasks[0].Severity != SeverityMinor || !tasks[0].DueDate.Equal(f.project.Phases[0].Tasks[0].DueDate) {
 		t.Fatalf("tasks = %d, last %+v", len(tasks), tasks[len(tasks)-1])
 	}
