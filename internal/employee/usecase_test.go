@@ -522,52 +522,51 @@ func TestUploadAvatarAuthorization(t *testing.T) {
 	}
 }
 
-func TestUploadAvatarStorageFailures(t *testing.T) {
-	ctx := context.Background()
-	file := func() AvatarFile { return avatarFile("image/jpeg", imageBytes(16, jpegMagic)) }
+func uploadJPEGAvatar(repo EmployeeRepository, files contract.Storage) error {
+	_, err := NewEmployeeUsecase(repo, files, avatarBucket).UploadAvatar(context.Background(), employeeA, "e1", avatarFile("image/jpeg", imageBytes(16, jpegMagic)))
+	return err
+}
 
-	t.Run("upload failure leaves no avatar", func(t *testing.T) {
-		repo := newMemoryRepository()
-		files := newMemoryStorage()
-		files.failUpload = true
-		_, err := NewEmployeeUsecase(repo, files, avatarBucket).UploadAvatar(ctx, employeeA, "e1", file())
-		if errorCode(err) != "INTERNAL_ERROR" || strings.Contains(err.Error(), "storage unavailable") {
-			t.Fatalf("err = %v", err)
-		}
-		if repo.employees["e1"].AvatarURL != nil || repo.employees["e1"].Version != 1 || len(files.objects) != 0 {
-			t.Fatal("failed upload changed the Employee or left an object")
-		}
-	})
+func TestUploadAvatarUploadFailureLeavesNoAvatar(t *testing.T) {
+	repo := newMemoryRepository()
+	files := newMemoryStorage()
+	files.failUpload = true
+	err := uploadJPEGAvatar(repo, files)
+	if errorCode(err) != "INTERNAL_ERROR" || strings.Contains(err.Error(), "storage unavailable") {
+		t.Fatalf("err = %v", err)
+	}
+	if repo.employees["e1"].AvatarURL != nil || repo.employees["e1"].Version != 1 || len(files.objects) != 0 {
+		t.Fatal("failed upload changed the Employee or left an object")
+	}
+}
 
-	t.Run("metadata failure removes the new object", func(t *testing.T) {
-		repo := newMemoryRepository()
-		repo.updateErr = errors.New("db down")
-		files := newMemoryStorage()
-		_, err := NewEmployeeUsecase(repo, files, avatarBucket).UploadAvatar(ctx, employeeA, "e1", file())
-		if err == nil || len(files.objects) != 0 || repo.employees["e1"].AvatarURL != nil {
-			t.Fatalf("err %v objects %d", err, len(files.objects))
-		}
-	})
+func TestUploadAvatarMetadataFailureRemovesNewObject(t *testing.T) {
+	repo := newMemoryRepository()
+	repo.updateErr = errors.New("db down")
+	files := newMemoryStorage()
+	err := uploadJPEGAvatar(repo, files)
+	if err == nil || len(files.objects) != 0 || repo.employees["e1"].AvatarURL != nil {
+		t.Fatalf("err %v objects %d", err, len(files.objects))
+	}
+}
 
-	t.Run("presign failure keeps the stored object", func(t *testing.T) {
-		repo := newMemoryRepository()
-		files := newMemoryStorage()
-		files.failURL = true
-		_, err := NewEmployeeUsecase(repo, files, avatarBucket).UploadAvatar(ctx, employeeA, "e1", file())
-		if errorCode(err) != "INTERNAL_ERROR" || repo.employees["e1"].AvatarURL == nil || len(files.objects) != 1 {
-			t.Fatalf("err %v stored %v objects %d", err, repo.employees["e1"].AvatarURL, len(files.objects))
-		}
-		if strings.Contains(err.Error(), *repo.employees["e1"].AvatarURL) {
-			t.Fatal("error exposed the object key")
-		}
-	})
+func TestUploadAvatarPresignFailureKeepsStoredObject(t *testing.T) {
+	repo := newMemoryRepository()
+	files := newMemoryStorage()
+	files.failURL = true
+	err := uploadJPEGAvatar(repo, files)
+	if errorCode(err) != "INTERNAL_ERROR" || repo.employees["e1"].AvatarURL == nil || len(files.objects) != 1 {
+		t.Fatalf("err %v stored %v objects %d", err, repo.employees["e1"].AvatarURL, len(files.objects))
+	}
+	if strings.Contains(err.Error(), *repo.employees["e1"].AvatarURL) {
+		t.Fatal("error exposed the object key")
+	}
+}
 
-	t.Run("storage is required", func(t *testing.T) {
-		_, err := NewEmployeeUsecase(newMemoryRepository(), nil, avatarBucket).UploadAvatar(ctx, employeeA, "e1", file())
-		if errorCode(err) != "INTERNAL_ERROR" {
-			t.Fatalf("err = %v", err)
-		}
-	})
+func TestUploadAvatarRequiresStorage(t *testing.T) {
+	if err := uploadJPEGAvatar(newMemoryRepository(), nil); errorCode(err) != "INTERNAL_ERROR" {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestUploadAvatarReplacesPreviousObject(t *testing.T) {
