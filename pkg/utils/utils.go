@@ -31,6 +31,11 @@ func Unique[T comparable](values []T) []T {
 	return result
 }
 
+// ContainsPattern returns a LIKE pattern matching values that contain search literally.
+func ContainsPattern(search string) string {
+	return "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(search) + "%"
+}
+
 // Optional trims a nullable string and treats blank as null.
 func Optional(value *string) *string {
 	if value == nil {

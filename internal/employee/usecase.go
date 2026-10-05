@@ -17,6 +17,7 @@ import (
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
+	"github.com/aifgrouplaos/candidate-api/pkg/pagination"
 	"github.com/aifgrouplaos/candidate-api/pkg/utils"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
@@ -24,9 +25,6 @@ import (
 
 const (
 	maxTenantLogins = 200
-	defaultLimit    = 20
-	maxLimit        = 100
-	maxPage         = 10_000
 	maxAvatarBytes  = 2 << 20
 	// avatarURLExpiry is long enough for a page to load the image and short
 	// enough that clients must not store it as a permanent identifier.
@@ -88,13 +86,6 @@ type ListQuery struct {
 	SortOrder    string `query:"sortOrder"`
 }
 
-type PageMeta struct {
-	Page       int   `json:"page"`
-	Limit      int   `json:"limit"`
-	Total      int64 `json:"total"`
-	TotalPages int   `json:"totalPages"`
-}
-
 type EmployeeView struct {
 	ID           string      `json:"id"`
 	EmployeeCode string      `json:"employeeCode"`
@@ -119,7 +110,7 @@ type AvatarFile struct {
 }
 
 type EmployeeUsecase interface {
-	List(ctx context.Context, actor auth.Principal, query ListQuery) ([]*EmployeeView, PageMeta, error)
+	List(ctx context.Context, actor auth.Principal, query ListQuery) ([]*EmployeeView, pagination.Meta, error)
 	Get(ctx context.Context, actor auth.Principal, id string) (*EmployeeView, error)
 	Create(ctx context.Context, actor auth.Principal, input CreateEmployeeInput) (*EmployeeView, error)
 	Update(ctx context.Context, actor auth.Principal, id string, input UpdateEmployeeInput) (*EmployeeView, error)
@@ -138,9 +129,9 @@ func NewEmployeeUsecase(repo EmployeeRepository, files contract.Storage, bucket 
 	return &employeeUsecase{repo: repo, files: files, bucket: bucket}
 }
 
-func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query ListQuery) ([]*EmployeeView, PageMeta, error) {
+func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query ListQuery) ([]*EmployeeView, pagination.Meta, error) {
 	if actor.Role != auth.RoleAdmin {
-		return nil, PageMeta{}, errForbidden
+		return nil, pagination.Meta{}, errForbidden
 	}
 	var v validation
 	filter := ListFilter{TenantID: actor.TenantID, Search: strings.TrimSpace(query.Search), SortBy: SortCreatedAt}
@@ -168,31 +159,27 @@ func (u *employeeUsecase) List(ctx context.Context, actor auth.Principal, query 
 	default:
 		v.Add("sortOrder", "Sort order must be asc or desc.")
 	}
-	if query.Page > maxPage {
+	if query.Page > pagination.MaxPage {
 		v.Add("page", "Page is too large.")
 	}
 	if err := v.Err(); err != nil {
-		return nil, PageMeta{}, err
+		return nil, pagination.Meta{}, err
 	}
-	page, limit := max(query.Page, 1), query.Limit
-	if limit < 1 {
-		limit = defaultLimit
-	}
-	limit = min(limit, maxLimit)
-	filter.Offset, filter.Limit = (page-1)*limit, limit
+	page, limit, offset := pagination.Bounds(query.Page, query.Limit)
+	filter.Offset, filter.Limit = offset, limit
 
 	employees, total, err := u.repo.List(ctx, filter)
 	if err != nil {
-		return nil, PageMeta{}, err
+		return nil, pagination.Meta{}, err
 	}
 	views := make([]*EmployeeView, len(employees))
 	for i, employee := range employees {
 		views[i], err = u.present(ctx, employee)
 		if err != nil {
-			return nil, PageMeta{}, err
+			return nil, pagination.Meta{}, err
 		}
 	}
-	return views, PageMeta{Page: page, Limit: limit, Total: total, TotalPages: int((total + int64(limit) - 1) / int64(limit))}, nil
+	return views, pagination.NewMeta(page, limit, total), nil
 }
 
 func (u *employeeUsecase) Get(ctx context.Context, actor auth.Principal, id string) (*EmployeeView, error) {

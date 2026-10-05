@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
+	"github.com/aifgrouplaos/candidate-api/pkg/utils"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
@@ -50,7 +50,7 @@ func SeedDepartments(ctx context.Context, db contract.ORM) error {
 func (r *employeeRepository) List(ctx context.Context, filter ListFilter) ([]*Employee, int64, error) {
 	query := r.db.Session(ctx).Model(&Employee{}).Where("tenant_id = ?", filter.TenantID)
 	if filter.Search != "" {
-		pattern := "%" + strings.NewReplacer(`\`, `\\`, "%", `\%`, "_", `\_`).Replace(filter.Search) + "%"
+		pattern := utils.ContainsPattern(filter.Search)
 		query = query.Where("(full_name ILIKE ? OR email ILIKE ? OR employee_code ILIKE ?)", pattern, pattern, pattern)
 	}
 	if filter.DepartmentID != "" {
