@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -115,6 +116,60 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 	t.Run("duplicate code conflicts only within the tenant", f.testDuplicateCode)
 	t.Run("a failing task rolls back the whole submission", f.testRollback)
 	t.Run("concurrent submissions with one key create one project", f.testConcurrentKey)
+	t.Run("lists tenant projects newest first with literal search", f.testList)
+	t.Run("delete removes phases and tasks only in the tenant", f.testDelete)
+}
+
+func (f *repoFixture) testList(t *testing.T) {
+	codes := func(filter ListFilter) ([]string, int64) {
+		t.Helper()
+		filter.TenantID = tenantA
+		projects, total, err := f.repo.List(f.ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, p := range projects {
+			if p.Phases != nil {
+				t.Fatalf("%s loaded phases", p.Code)
+			}
+			got = append(got, p.Code)
+		}
+		return got, total
+	}
+	for _, c := range []struct {
+		filter ListFilter
+		want   []string
+		total  int64
+	}{
+		{ListFilter{Limit: 10}, []string{"PRJ-RACE", "PRJ-1"}, 2},
+		{ListFilter{Offset: 1, Limit: 1}, []string{"PRJ-1"}, 2},
+		{ListFilter{Search: "race", Limit: 10}, []string{"PRJ-RACE"}, 1},
+		{ListFilter{Search: "project prj-1", Limit: 10}, []string{"PRJ-1"}, 1},
+		{ListFilter{Search: "%", Limit: 10}, nil, 0},
+	} {
+		if got, total := codes(c.filter); !reflect.DeepEqual(got, c.want) || total != c.total {
+			t.Errorf("%+v: got %v (%d), want %v (%d)", c.filter, got, total, c.want, c.total)
+		}
+	}
+}
+
+func (f *repoFixture) testDelete(t *testing.T) {
+	for _, c := range []struct{ tenant, id string }{{tenantB, f.project.ID}, {tenantA, "not-a-uuid"}, {tenantA, employeeB}} {
+		if err := f.repo.Delete(f.ctx, c.tenant, c.id); errorCode(err) != "NOT_FOUND" {
+			t.Fatalf("%v: %v", c, err)
+		}
+	}
+	before := rowCounts(t, f.db)
+	if err := f.repo.Delete(f.ctx, tenantA, f.project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if after := rowCounts(t, f.db); after != [3]int64{before[0] - 1, before[1] - 5, before[2] - 500} {
+		t.Fatalf("counts %v -> %v", before, after)
+	}
+	if err := f.repo.Delete(f.ctx, tenantA, f.project.ID); errorCode(err) != "NOT_FOUND" {
+		t.Fatalf("second delete: %v", err)
+	}
 }
 
 func (f *repoFixture) testActiveEmployees(t *testing.T) {

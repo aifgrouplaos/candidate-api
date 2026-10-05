@@ -81,10 +81,34 @@ func TestProjectRoutesContract(t *testing.T) {
 		{"invalid payload", http.MethodPost, "/projects", `{"phases":[]}`, "key-4", adminA, fiber.StatusUnprocessableEntity},
 		{"employee get", http.MethodGet, "/projects/" + project.ID, "", "", employeeA, fiber.StatusOK},
 		{"other tenant get", http.MethodGet, "/projects/" + project.ID, "", "", adminB, fiber.StatusNotFound},
+		{"bad list query", http.MethodGet, "/projects?page=x", "", "", employeeA, fiber.StatusBadRequest},
+		{"employee delete", http.MethodDelete, "/projects/" + project.ID, "", "", employeeA, fiber.StatusForbidden},
+		{"other tenant delete", http.MethodDelete, "/projects/" + project.ID, "", "", adminB, fiber.StatusNotFound},
 	}
 	for _, c := range cases {
 		if status, _ := do(c.method, c.path, c.body, c.key, c.actor); status != c.status {
 			t.Errorf("%s: status %d, want %d", c.name, status, c.status)
 		}
+	}
+
+	for path, want := range map[string]string{
+		"/projects?search=HR": `[{"id":"` + project.ID + `"`,
+		"/lookups/task-types": `["feature","bug"]`,
+		"/lookups/priorities": `["low","medium","high","critical"]`,
+	} {
+		status, got := do(http.MethodGet, path, "", "", employeeA)
+		if status != fiber.StatusOK || !strings.HasPrefix(string(got["data"]), want) || strings.Contains(string(got["data"]), `"phases"`) {
+			t.Errorf("%s: %d %s", path, status, got["data"])
+		}
+	}
+	if _, got := do(http.MethodGet, "/projects", "", "", employeeA); string(got["meta"]) != `{"page":1,"limit":20,"total":1,"totalPages":1}` {
+		t.Errorf("list meta = %s", got["meta"])
+	}
+
+	if status, got := do(http.MethodDelete, "/projects/"+project.ID, "", "", adminA); status != fiber.StatusOK || string(got["data"]) != "null" {
+		t.Fatalf("delete: %d %s", status, got["data"])
+	}
+	if status, _ := do(http.MethodGet, "/projects/"+project.ID, "", "", adminA); status != fiber.StatusNotFound {
+		t.Fatalf("get after delete: %d", status)
 	}
 }

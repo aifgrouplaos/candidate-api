@@ -18,9 +18,26 @@ func NewProjectHandler(usecase ProjectUsecase) *ProjectHandler {
 }
 
 func (h *ProjectHandler) RegisterRoutes(router fiber.Router, protected ...fiber.Handler) {
+	lookups := router.Group("/lookups", protected...)
+	lookups.Get("/task-types", h.TaskTypes)
+	lookups.Get("/priorities", h.Priorities)
 	projects := router.Group("/projects", protected...)
+	projects.Get("/", h.List)
 	projects.Post("/", h.Create)
 	projects.Get("/:id", h.Get)
+	projects.Delete("/:id", h.Delete)
+}
+
+func (h *ProjectHandler) List(c *fiber.Ctx) error {
+	var query ListQuery
+	if err := c.QueryParser(&query); err != nil {
+		return errs.ErrBadRequest
+	}
+	result, meta, err := h.usecase.List(c.UserContext(), auth.CurrentPrincipal(c), query)
+	if err != nil {
+		return err
+	}
+	return httpresponse.Page(c, result, meta)
 }
 
 func (h *ProjectHandler) Create(c *fiber.Ctx) error {
@@ -43,3 +60,14 @@ func (h *ProjectHandler) Get(c *fiber.Ctx) error {
 	}
 	return httpresponse.Success(c, result)
 }
+
+func (h *ProjectHandler) Delete(c *fiber.Ctx) error {
+	if err := h.usecase.Delete(c.UserContext(), auth.CurrentPrincipal(c), c.Params("id")); err != nil {
+		return err
+	}
+	return httpresponse.Success(c, nil)
+}
+
+func (h *ProjectHandler) TaskTypes(c *fiber.Ctx) error { return httpresponse.Success(c, TaskTypes) }
+
+func (h *ProjectHandler) Priorities(c *fiber.Ctx) error { return httpresponse.Success(c, Priorities) }

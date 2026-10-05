@@ -300,21 +300,31 @@ paths:
       tags: [Projects]
       operationId: listProjects
       summary: List tenant Projects
+      description: >-
+        Any authenticated user sees the Projects of their own tenant, newest first. Items omit
+        Phases and Tasks; read them with GET /projects/{id}.
       parameters:
         - { $ref: '#/components/parameters/Page' }
         - { $ref: '#/components/parameters/Limit' }
         - name: search
           in: query
-          schema: { type: string }
+          schema: { type: string, maxLength: 100 }
+          description: Case-insensitive match on name or code.
       responses:
         '200':
-          description: Paginated tenant Projects
+          description: Paginated tenant Project summaries
           headers:
             X-Request-Id: { $ref: '#/components/headers/RequestId' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectPage' }
+        '400':
+          description: Malformed query parameters
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
     post:
       tags: [Projects]
       operationId: createProject
@@ -379,7 +389,7 @@ paths:
       tags: [Projects]
       operationId: deleteProject
       summary: Delete a tenant Project
-      description: Admin only; used for assessment cleanup.
+      description: Admin only; used for assessment cleanup. Permanently deletes the Project with its Phases and Tasks.
       responses:
         '200': { $ref: '#/components/responses/EmptySuccess' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -829,11 +839,25 @@ components:
         startDate: { type: string, format: date }
         endDate: { type: string, format: date }
         phases: { type: array, minItems: 1, maxItems: 20, items: { $ref: '#/components/schemas/CreatePhase' } }
+    ProjectSummary:
+      type: object
+      required: [id, name, code, description, ownerId, startDate, endDate, version, createdAt, updatedAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        code: { type: string }
+        description: { type: [string, 'null'] }
+        ownerId: { type: string }
+        startDate: { type: string, format: date }
+        endDate: { type: string, format: date }
+        version: { type: integer, minimum: 1 }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     ProjectPage:
       type: object
       required: [data, meta]
       properties:
-        data: { type: array, items: { $ref: '#/components/schemas/Project' } }
+        data: { type: array, items: { $ref: '#/components/schemas/ProjectSummary' } }
         meta: { $ref: '#/components/schemas/PageMeta' }
     Conversation:
       type: object

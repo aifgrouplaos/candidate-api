@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/BounkhongDev/bkgo/errs"
@@ -30,7 +31,29 @@ type memoryRepository struct {
 	projects map[string]*Project
 	active   map[string]string // employee ID -> tenant ID
 	// keyRace makes the next Create act as if a concurrent request stored this Project first.
-	keyRace *Project
+	keyRace    *Project
+	lastFilter ListFilter
+}
+
+// List ignores Search and order; the Postgres test covers them.
+func (r *memoryRepository) List(_ context.Context, filter ListFilter) ([]*Project, int64, error) {
+	r.lastFilter = filter
+	var matches []*Project
+	for _, p := range r.projects {
+		if p.TenantID == filter.TenantID {
+			matches = append(matches, p)
+		}
+	}
+	page := matches[min(filter.Offset, len(matches)):min(filter.Offset+filter.Limit, len(matches))]
+	return page, int64(len(matches)), nil
+}
+
+func (r *memoryRepository) Delete(ctx context.Context, tenantID, id string) error {
+	if _, err := r.FindByID(ctx, tenantID, id); err != nil {
+		return err
+	}
+	delete(r.projects, id)
+	return nil
 }
 
 func newMemoryRepository() *memoryRepository {
@@ -304,6 +327,68 @@ func TestGetIsTenantScoped(t *testing.T) {
 	}
 	if _, err := u.Get(ctx, auth.Principal{}, created.ID); errorCode(err) != "FORBIDDEN" {
 		t.Fatalf("zero principal: %v", err)
+	}
+}
+
+func TestListIsTenantScopedAndPaged(t *testing.T) {
+	repo := newMemoryRepository()
+	u := NewProjectUsecase(repo)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		input := validInput()
+		input.Code = fmt.Sprintf("PRJ-%d", i)
+		if _, err := u.Create(ctx, adminA, input.Code, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := u.Create(ctx, adminB, "b", tenantBInput()); err != nil {
+		t.Fatal(err)
+	}
+
+	got, meta, err := u.List(ctx, employeeA, ListQuery{Page: 2, Limit: 2, Search: "  HR  "})
+	if err != nil || len(got) != 1 || got[0].OwnerID != ownerA || got[0].StartDate != "2026-11-01" {
+		t.Fatalf("list = %+v, err %v", got, err)
+	}
+	if want := (ListFilter{TenantID: tenantA, Search: "HR", Offset: 2, Limit: 2}); repo.lastFilter != want {
+		t.Fatalf("filter = %+v, want %+v", repo.lastFilter, want)
+	}
+	if meta.Page != 2 || meta.Limit != 2 || meta.Total != 3 || meta.TotalPages != 2 {
+		t.Fatalf("meta = %+v", meta)
+	}
+	if _, meta, _ := u.List(ctx, adminB, ListQuery{Limit: 500}); meta.Total != 1 || meta.Limit != 100 || meta.Page != 1 {
+		t.Fatalf("other tenant meta = %+v", meta)
+	}
+	if _, _, err := u.List(ctx, auth.Principal{}, ListQuery{}); errorCode(err) != "FORBIDDEN" {
+		t.Fatalf("zero principal: %v", err)
+	}
+}
+
+func TestListValidatesQuery(t *testing.T) {
+	query := ListQuery{Search: strings.Repeat("x", 101), Page: 10_001}
+	_, _, err := NewProjectUsecase(newMemoryRepository()).List(context.Background(), adminA, query)
+	if got := detailFields(t, err); !reflect.DeepEqual(got, []string{"search", "page"}) {
+		t.Fatalf("fields = %v", got)
+	}
+}
+
+func TestDeleteRequiresAdminInTenant(t *testing.T) {
+	u := NewProjectUsecase(newMemoryRepository())
+	ctx := context.Background()
+	created, err := u.Create(ctx, adminA, "key", validInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.Delete(ctx, employeeA, created.ID); errorCode(err) != "FORBIDDEN" {
+		t.Fatalf("employee delete: %v", err)
+	}
+	if err := u.Delete(ctx, adminB, created.ID); errorCode(err) != "NOT_FOUND" {
+		t.Fatalf("other tenant delete: %v", err)
+	}
+	if err := u.Delete(ctx, adminA, created.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := u.Get(ctx, adminA, created.ID); errorCode(err) != "NOT_FOUND" {
+		t.Fatalf("get after delete: %v", err)
 	}
 }
 

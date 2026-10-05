@@ -3,6 +3,7 @@ package project
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -13,7 +14,10 @@ const (
 	TaskBug     TaskType = "bug"
 )
 
-func (t TaskType) Valid() bool { return t == TaskFeature || t == TaskBug }
+// TaskTypes are the task type lookup values, in display order.
+var TaskTypes = []TaskType{TaskFeature, TaskBug}
+
+func (t TaskType) Valid() bool { return slices.Contains(TaskTypes, t) }
 
 type Priority string
 
@@ -24,9 +28,10 @@ const (
 	PriorityCritical Priority = "critical"
 )
 
-func (p Priority) Valid() bool {
-	return p == PriorityLow || p == PriorityMedium || p == PriorityHigh || p == PriorityCritical
-}
+// Priorities are the priority lookup values, lowest first.
+var Priorities = []Priority{PriorityLow, PriorityMedium, PriorityHigh, PriorityCritical}
+
+func (p Priority) Valid() bool { return slices.Contains(Priorities, p) }
 
 type Severity string
 
@@ -92,7 +97,18 @@ func (Task) TableName() string { return "project_tasks" }
 // errKeyUsed means another Project in the tenant already has the Idempotency-Key.
 var errKeyUsed = errors.New("idempotency key already used")
 
+// ListFilter selects one page of a tenant's Projects; Search matches name or code.
+type ListFilter struct {
+	TenantID string
+	Search   string
+	Offset   int
+	Limit    int
+}
+
 type ProjectRepository interface {
+	// List returns one page of tenantID's Projects, newest first, without Phases, plus the
+	// total number of matches.
+	List(ctx context.Context, filter ListFilter) ([]*Project, int64, error)
 	// FindByID returns NOT_FOUND unless the Project exists in tenantID. Phases are sorted
 	// by Order; Tasks keep their submitted order.
 	FindByID(ctx context.Context, tenantID, id string) (*Project, error)
@@ -104,4 +120,7 @@ type ProjectRepository interface {
 	// errKeyUsed when the tenant already used project.IdempotencyKey, and CONFLICT when the
 	// tenant already has a Project with the code.
 	Create(ctx context.Context, project *Project) error
+	// Delete removes the Project with its Phases and Tasks, returning NOT_FOUND unless it
+	// exists in tenantID.
+	Delete(ctx context.Context, tenantID, id string) error
 }
