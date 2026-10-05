@@ -115,6 +115,9 @@ type EmployeeUsecase interface {
 	UploadAvatar(ctx context.Context, actor auth.Principal, id string, file AvatarFile) (*EmployeeView, error)
 	Delete(ctx context.Context, actor auth.Principal, id string) error
 	Departments(ctx context.Context) ([]Department, error)
+	// AvatarURL presigns a stored avatar key for a caller already authorized to see the
+	// Employee. It returns nil when key is not an avatar this API stored for tenantID.
+	AvatarURL(ctx context.Context, tenantID string, key *string) (*string, error)
 }
 
 type employeeUsecase struct {
@@ -365,21 +368,28 @@ func (u *employeeUsecase) department(ctx context.Context, v *validation, value *
 // The stored object key is not a client-facing identifier.
 func (u *employeeUsecase) present(ctx context.Context, e *Employee) (*EmployeeView, error) {
 	result := view(e)
-	result.AvatarURL = nil
-	key, ok := avatarObjectKey(e.TenantID, e.AvatarURL)
+	url, err := u.AvatarURL(ctx, e.TenantID, e.AvatarURL)
+	if err != nil {
+		return nil, err
+	}
+	result.AvatarURL = url
+	return result, nil
+}
+
+func (u *employeeUsecase) AvatarURL(ctx context.Context, tenantID string, key *string) (*string, error) {
+	objectKey, ok := avatarObjectKey(tenantID, key)
 	if !ok {
-		return result, nil
+		return nil, nil
 	}
 	if u.files == nil {
 		return nil, errs.Internal(msgNoStorage)
 	}
-	url, err := u.files.URL(ctx, u.bucket, key, avatarURLExpiry)
+	url, err := u.files.URL(ctx, u.bucket, objectKey, avatarURLExpiry)
 	if err != nil {
 		slog.Error("avatar url failed", "error", err, "requestId", requestID(ctx))
 		return nil, errs.Internal("could not authorize the avatar download")
 	}
-	result.AvatarURL = &url
-	return result, nil
+	return &url, nil
 }
 
 func view(e *Employee) *EmployeeView {
