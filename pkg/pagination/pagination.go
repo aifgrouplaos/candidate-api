@@ -17,8 +17,8 @@ type Meta struct {
 
 // Bounds returns page and limit with defaults applied and limit capped, plus the row offset.
 // Callers reject page > MaxPage first.
-func Bounds(page, limit int) (int, int, int) {
-	page = max(page, 1)
+func Bounds(queryPage, queryLimit int) (page, limit, offset int) {
+	page, limit = max(queryPage, 1), queryLimit
 	if limit < 1 {
 		limit = DefaultLimit
 	}
