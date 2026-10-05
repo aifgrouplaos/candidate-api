@@ -73,6 +73,10 @@ type ListFilter struct {
 	Limit        int
 }
 
+// Provision sets up records that must exist with every Employee login, such as its
+// conversation. It runs in the transaction that creates or restores the Employee.
+type Provision func(tx *gorm.DB, tenantID, employeeID string) error
+
 type EmployeeRepository interface {
 	List(ctx context.Context, filter ListFilter) ([]*Employee, int64, error)
 	// FindByID returns NOT_FOUND unless the Employee exists, is not deleted, and belongs to tenantID.
@@ -82,6 +86,7 @@ type EmployeeRepository interface {
 	// CONFLICT for a duplicate email or when the tenant already has maxLogins logins.
 	// A Deleted Employee in this tenant with the same email is restored: profile fields and
 	// password come from the request, while id, code, avatar, and created time stay.
+	// Both paths run the repository's Provision before committing.
 	Create(ctx context.Context, employee *Employee, login *auth.User, maxLogins int) error
 	// Update returns VERSION_CONFLICT unless the stored version equals expectedVersion.
 	Update(ctx context.Context, employee *Employee, expectedVersion int) error

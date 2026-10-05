@@ -2,6 +2,7 @@ package employee
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	gormadapter "github.com/BounkhongDev/bkgo/adapter/gorm"
 	"github.com/BounkhongDev/bkgo/config"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
+	"gorm.io/gorm"
 )
 
 // newTestDB needs TEST_POSTGRES_DSN in key=value form, for example
@@ -59,9 +61,33 @@ func createEmployee(t *testing.T, repo EmployeeRepository, tenantID, name, email
 	return e
 }
 
+func TestCreateRollsBackWhenProvisionFails(t *testing.T) {
+	db := newTestDB(t)
+	failed := errors.New("provision failed")
+	var provisioned string
+	repo := NewEmployeeRepository(db, func(_ *gorm.DB, tenantID, employeeID string) error {
+		provisioned = tenantID + "/" + employeeID
+		return failed
+	})
+	e := &Employee{TenantID: tenantA, FullName: "Rollback", Email: "rollback@example.test", Status: StatusActive}
+	login := &auth.User{TenantID: tenantA, Email: e.Email, PasswordHash: "hash", Role: auth.RoleEmployee, FullName: e.FullName, Active: true}
+	if err := repo.Create(context.Background(), e, login, maxTenantLogins); !errors.Is(err, failed) {
+		t.Fatalf("err = %v", err)
+	}
+	if provisioned != tenantA+"/"+e.ID {
+		t.Fatalf("provisioned = %q", provisioned)
+	}
+	var employees, users int64
+	db.Raw().Unscoped().Model(&Employee{}).Count(&employees)
+	db.Raw().Model(&auth.User{}).Count(&users)
+	if employees != 0 || users != 0 {
+		t.Fatalf("employees = %d, users = %d after rollback", employees, users)
+	}
+}
+
 func TestRepositoryAgainstPostgres(t *testing.T) {
 	db := newTestDB(t)
-	repo := NewEmployeeRepository(db)
+	repo := NewEmployeeRepository(db, nil)
 	ctx := context.Background()
 
 	departments, err := repo.Departments(ctx)
