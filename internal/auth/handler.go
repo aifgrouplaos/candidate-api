@@ -77,10 +77,16 @@ func PrincipalFrom(c *fiber.Ctx) (Principal, bool) {
 	return principal, ok
 }
 
+// CurrentPrincipal returns the authenticated Principal, or a zero Principal before
+// Authentication has run. Every use case must reject a zero Principal's empty role.
+func CurrentPrincipal(c *fiber.Ctx) Principal {
+	principal, _ := PrincipalFrom(c)
+	return principal
+}
+
 // UserID returns the authenticated user's ID, or "" before Authentication has run.
 func UserID(c *fiber.Ctx) string {
-	principal, _ := PrincipalFrom(c)
-	return principal.UserID
+	return CurrentPrincipal(c).UserID
 }
 
 // LoginRateLimit keeps account and source-IP buckets independent, as API_SPEC requires.

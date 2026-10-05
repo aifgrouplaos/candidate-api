@@ -28,8 +28,8 @@ func (h *ProjectHandler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return errs.ErrBadRequest
 	}
-	// Clone because fasthttp reuses the header buffer after the request, and the key is stored.
-	result, err := h.usecase.Create(c.UserContext(), principal(c), strings.Clone(c.Get("Idempotency-Key")), input)
+
+	result, err := h.usecase.Create(c.UserContext(), auth.CurrentPrincipal(c), strings.Clone(c.Get("Idempotency-Key")), input)
 	if err != nil {
 		return err
 	}
@@ -37,16 +37,9 @@ func (h *ProjectHandler) Create(c *fiber.Ctx) error {
 }
 
 func (h *ProjectHandler) Get(c *fiber.Ctx) error {
-	result, err := h.usecase.Get(c.UserContext(), principal(c), c.Params("id"))
+	result, err := h.usecase.Get(c.UserContext(), auth.CurrentPrincipal(c), c.Params("id"))
 	if err != nil {
 		return err
 	}
 	return httpresponse.Success(c, result)
-}
-
-// principal skips the presence check because routes are registered only behind
-// auth.Authentication, and every Project operation rejects a zero Principal.
-func principal(c *fiber.Ctx) auth.Principal {
-	p, _ := auth.PrincipalFrom(c)
-	return p
 }

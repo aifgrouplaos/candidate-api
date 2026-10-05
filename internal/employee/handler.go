@@ -35,7 +35,7 @@ func (h *EmployeeHandler) List(c *fiber.Ctx) error {
 	if err := c.QueryParser(&query); err != nil {
 		return errs.ErrBadRequest
 	}
-	result, meta, err := h.usecase.List(requestContext(c), principal(c), query)
+	result, meta, err := h.usecase.List(requestContext(c), auth.CurrentPrincipal(c), query)
 	if err != nil {
 		return err
 	}
@@ -43,7 +43,7 @@ func (h *EmployeeHandler) List(c *fiber.Ctx) error {
 }
 
 func (h *EmployeeHandler) Get(c *fiber.Ctx) error {
-	result, err := h.usecase.Get(requestContext(c), principal(c), c.Params("id"))
+	result, err := h.usecase.Get(requestContext(c), auth.CurrentPrincipal(c), c.Params("id"))
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func (h *EmployeeHandler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return errs.ErrBadRequest
 	}
-	result, err := h.usecase.Create(requestContext(c), principal(c), input)
+	result, err := h.usecase.Create(requestContext(c), auth.CurrentPrincipal(c), input)
 	if err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func (h *EmployeeHandler) Update(c *fiber.Ctx) error {
 	if err := c.BodyParser(&input); err != nil {
 		return errs.ErrBadRequest
 	}
-	result, err := h.usecase.Update(requestContext(c), principal(c), c.Params("id"), input)
+	result, err := h.usecase.Update(requestContext(c), auth.CurrentPrincipal(c), c.Params("id"), input)
 	if err != nil {
 		return err
 	}
@@ -84,7 +84,7 @@ func (h *EmployeeHandler) UploadAvatar(c *fiber.Ctx) error {
 		return errs.ErrBadRequest
 	}
 	defer file.Close()
-	result, err := h.usecase.UploadAvatar(requestContext(c), principal(c), c.Params("id"), AvatarFile{
+	result, err := h.usecase.UploadAvatar(requestContext(c), auth.CurrentPrincipal(c), c.Params("id"), AvatarFile{
 		ContentType: header.Header.Get("Content-Type"),
 		Size:        header.Size,
 		Body:        file,
@@ -96,7 +96,7 @@ func (h *EmployeeHandler) UploadAvatar(c *fiber.Ctx) error {
 }
 
 func (h *EmployeeHandler) Delete(c *fiber.Ctx) error {
-	if err := h.usecase.Delete(requestContext(c), principal(c), c.Params("id")); err != nil {
+	if err := h.usecase.Delete(requestContext(c), auth.CurrentPrincipal(c), c.Params("id")); err != nil {
 		return err
 	}
 	return httpresponse.Success(c, nil)
@@ -125,11 +125,4 @@ func requestContext(c *fiber.Ctx) context.Context {
 func requestID(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey{}).(string)
 	return id
-}
-
-// principal skips the presence check because routes are registered only behind
-// auth.Authentication, and every Employee operation rejects a zero Principal's empty role.
-func principal(c *fiber.Ctx) auth.Principal {
-	p, _ := auth.PrincipalFrom(c)
-	return p
 }
