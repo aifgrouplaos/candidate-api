@@ -103,6 +103,13 @@ func list(t *testing.T, repo ChatRepository, reader auth.Principal, filter Conve
 	return conversations, strings.Join(names, ",")
 }
 
+func wantInbox(t *testing.T, repo ChatRepository, reader auth.Principal, filter ConversationFilter, want string) {
+	t.Helper()
+	if _, names := list(t, repo, reader, filter); names != want {
+		t.Fatalf("%+v inbox %+v = %s, want %s", reader, filter, names, want)
+	}
+}
+
 func TestConversationsAgainstPostgres(t *testing.T) {
 	db := newTestDB(t)
 	f := &chatFixture{t: t, db: db, employees: employee.NewEmployeeRepository(db, ProvisionConversation)}
@@ -121,12 +128,8 @@ func TestConversationsAgainstPostgres(t *testing.T) {
 		t.Fatalf("admin inbox = %s, first %+v", names, conversations[0])
 	}
 	somchaiConversation := conversations[1]
-	if _, names := list(t, repo, adminB, ConversationFilter{}); names != "Other Tenant" {
-		t.Fatalf("tenant B inbox = %s", names)
-	}
-	if _, names := list(t, repo, somchaiLogin, ConversationFilter{}); names != "Somchai" {
-		t.Fatalf("employee sees %s", names)
-	}
+	wantInbox(t, repo, adminB, ConversationFilter{}, "Other Tenant")
+	wantInbox(t, repo, somchaiLogin, ConversationFilter{}, "Somchai")
 
 	// Only the Employee and their tenant's Admin may read the conversation.
 	for _, reader := range []auth.Principal{adminB, annaLogin, {UserID: somchaiLogin.UserID, TenantID: tenantB, Role: auth.RoleEmployee}} {
@@ -149,15 +152,9 @@ func TestConversationsAgainstPostgres(t *testing.T) {
 	if got, _ := repo.FindByID(ctx, somchaiLogin, somchaiConversation.ID); got.UnreadCount != 1 {
 		t.Fatalf("employee unread = %d", got.UnreadCount)
 	}
-	if _, names := list(t, repo, adminA, ConversationFilter{}); names != "Somchai,Anna" {
-		t.Fatalf("inbox after message = %s", names)
-	}
-	if _, names := list(t, repo, adminA, ConversationFilter{UnreadOnly: true}); names != "Somchai" {
-		t.Fatalf("unread inbox = %s", names)
-	}
-	if _, names := list(t, repo, adminA, ConversationFilter{Search: "ANNA@"}); names != "Anna" {
-		t.Fatalf("search = %s", names)
-	}
+	wantInbox(t, repo, adminA, ConversationFilter{}, "Somchai,Anna")
+	wantInbox(t, repo, adminA, ConversationFilter{UnreadOnly: true}, "Somchai")
+	wantInbox(t, repo, adminA, ConversationFilter{Search: "ANNA@"}, "Anna")
 	if page, _ := list(t, repo, adminA, ConversationFilter{Offset: 1, Limit: 1}); len(page) != 1 || page[0].EmployeeName != "Anna" {
 		t.Fatalf("second page = %v", page)
 	}
@@ -166,9 +163,7 @@ func TestConversationsAgainstPostgres(t *testing.T) {
 	if err := f.employees.Delete(ctx, tenantA, somchai.ID, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if _, names := list(t, repo, adminA, ConversationFilter{}); names != "Anna" {
-		t.Fatalf("inbox after delete = %s", names)
-	}
+	wantInbox(t, repo, adminA, ConversationFilter{}, "Anna")
 	f.employee(tenantA, "Somchai Restored", "somchai@example.test")
 	restored, err := repo.FindByID(ctx, adminA, somchaiConversation.ID)
 	if err != nil || restored.EmployeeName != "Somchai Restored" || restored.LastMessage.ID != last.ID {
