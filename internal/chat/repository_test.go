@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -226,4 +227,134 @@ func TestMessagesAgainstPostgres(t *testing.T) {
 	if messages[0].Sender == nil || messages[0].Sender.Role != auth.RoleEmployee {
 		t.Fatalf("sender = %+v", messages[0].Sender)
 	}
+}
+
+// sendFixture is Somchai's conversation with the Admin, beside Anna's untouched one.
+type sendFixture struct {
+	t              *testing.T
+	repo           ChatRepository
+	admin, somchai auth.Principal
+	conversation   string
+}
+
+func newSendFixture(t *testing.T) *sendFixture {
+	db := newTestDB(t)
+	f := &chatFixture{t: t, db: db, employees: employee.NewEmployeeRepository(db, ProvisionConversation)}
+	s := &sendFixture{t: t, repo: NewChatRepository(db), admin: f.admin(tenantA, "admin@example.test")}
+	_, s.somchai = f.employee(tenantA, "Somchai", "somchai@example.test")
+	f.employee(tenantA, "Anna", "anna@example.test")
+	conversations, _ := list(t, s.repo, s.admin, ConversationFilter{})
+	s.conversation = conversations[1].ID
+	return s
+}
+
+func nthClientID(i int) string { return fmt.Sprintf("00000000-0000-0000-0000-%012d", i) }
+
+func (s *sendFixture) send(sender auth.Principal, clientID, text string) (*Message, error) {
+	return s.repo.Send(context.Background(), &Message{ConversationID: s.conversation, SenderID: sender.UserID, ClientMessageID: clientID, Text: text})
+}
+
+func (s *sendFixture) mustSend(sender auth.Principal, clientID, text string) *Message {
+	s.t.Helper()
+	m, err := s.send(sender, clientID, text)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	return m
+}
+
+func (s *sendFixture) markRead(reader auth.Principal, messageID string) {
+	s.t.Helper()
+	if err := s.repo.MarkRead(context.Background(), reader, s.conversation, messageID); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// wantUnread checks reader's conversation unread count and aggregate total agree on want.
+func (s *sendFixture) wantUnread(reader auth.Principal, want int) {
+	s.t.Helper()
+	c, err := s.repo.FindByID(context.Background(), reader, s.conversation)
+	total, totalErr := s.repo.UnreadTotal(context.Background(), reader)
+	if err != nil || totalErr != nil || c.UnreadCount != want || total != int64(want) {
+		s.t.Fatalf("%s unread = %d, total %d, want %d (err %v, %v)", reader.Role, c.UnreadCount, total, want, err, totalErr)
+	}
+}
+
+func TestSendAgainstPostgres(t *testing.T) {
+	s := newSendFixture(t)
+
+	// Concurrent sends, including retries of one clientMessageId, get gapless sequences.
+	var wg sync.WaitGroup
+	for i := 1; i <= 20; i++ {
+		id, text := nthClientID(99), "retry"
+		if i%2 == 0 {
+			id, text = nthClientID(i/2), "hi"
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := s.send(s.somchai, id, text); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	wg.Wait()
+	messages, err := s.repo.Messages(context.Background(), MessageFilter{ConversationID: s.conversation, Limit: 100})
+	if err != nil || len(messages) != 11 || messages[0].Sequence != 1 || messages[10].Sequence != 11 {
+		t.Fatalf("stored = %d messages, err %v", len(messages), err)
+	}
+
+	first, retry := s.mustSend(s.somchai, nthClientID(1), "ignored"), s.mustSend(s.somchai, nthClientID(1), "ignored")
+	if first.ID != retry.ID || first.Text != "hi" || first.Sender == nil || first.Sender.FullName != "Somchai" {
+		t.Fatalf("replay = %+v, %+v", first, retry)
+	}
+	if reply := s.mustSend(s.admin, nthClientID(1), "reply"); reply.ID == first.ID || reply.Sequence != 12 {
+		t.Fatalf("admin reply = %+v", reply)
+	}
+	wantInbox(t, s.repo, s.admin, ConversationFilter{}, "Somchai,Anna")
+}
+
+func TestMarkReadAgainstPostgres(t *testing.T) {
+	s := newSendFixture(t)
+	var sent []*Message
+	for i := 1; i <= 5; i++ {
+		sent = append(sent, s.mustSend(s.somchai, nthClientID(i), "hi"))
+	}
+	reply := s.mustSend(s.admin, nthClientID(1), "reply")
+	s.wantUnread(s.admin, 5)
+
+	// Reading through a message marks only the other participant's earlier messages.
+	s.markRead(s.admin, sent[3].ID)
+	s.wantUnread(s.admin, 1)
+	readAt := s.readAt(sent[3].ID)
+
+	// An older position never moves the read position back or restamps readAt.
+	s.markRead(s.admin, sent[1].ID)
+	s.wantUnread(s.admin, 1)
+	if again := s.readAt(sent[3].ID); readAt == nil || again == nil || !again.Equal(*readAt) {
+		t.Fatalf("readAt %v -> %v", readAt, again)
+	}
+
+	s.markRead(s.admin, reply.ID)
+	s.wantUnread(s.admin, 0)
+	wantInbox(t, s.repo, s.admin, ConversationFilter{UnreadOnly: true}, "")
+	s.wantUnread(s.somchai, 1)
+	if err := s.repo.MarkRead(context.Background(), s.admin, s.conversation, "not-a-uuid"); !errors.Is(err, errCursorNotFound) {
+		t.Fatalf("bad id err = %v", err)
+	}
+}
+
+func (s *sendFixture) readAt(messageID string) *time.Time {
+	s.t.Helper()
+	messages, err := s.repo.Messages(context.Background(), MessageFilter{ConversationID: s.conversation, Limit: 100})
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	for _, m := range messages {
+		if m.ID == messageID {
+			return m.ReadAt
+		}
+	}
+	s.t.Fatalf("message %s not found", messageID)
+	return nil
 }

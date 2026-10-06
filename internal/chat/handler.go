@@ -16,11 +16,46 @@ func NewChatHandler(usecase ChatUsecase) *ChatHandler {
 }
 
 func (h *ChatHandler) RegisterRoutes(router fiber.Router, protected ...fiber.Handler) {
-	conversations := router.Group("/chat/conversations", protected...)
+	chat := router.Group("/chat", protected...)
+	chat.Get("/unread-count", h.UnreadCount)
+	conversations := chat.Group("/conversations")
 	conversations.Get("/", h.List)
 	conversations.Post("/", h.Open)
 	conversations.Get("/:id", h.Get)
 	conversations.Get("/:id/messages", h.Messages)
+	conversations.Post("/:id/messages", h.Send)
+	conversations.Post("/:id/read", h.MarkRead)
+}
+
+func (h *ChatHandler) Send(c *fiber.Ctx) error {
+	var input SendInput
+	if err := c.BodyParser(&input); err != nil {
+		return errs.ErrBadRequest
+	}
+	result, err := h.usecase.Send(c.UserContext(), auth.CurrentPrincipal(c), c.Params("id"), input)
+	if err != nil {
+		return err
+	}
+	return httpresponse.Success(c.Status(fiber.StatusCreated), result)
+}
+
+func (h *ChatHandler) MarkRead(c *fiber.Ctx) error {
+	var input ReadInput
+	if err := c.BodyParser(&input); err != nil {
+		return errs.ErrBadRequest
+	}
+	if err := h.usecase.MarkRead(c.UserContext(), auth.CurrentPrincipal(c), c.Params("id"), input); err != nil {
+		return err
+	}
+	return httpresponse.Success(c, nil)
+}
+
+func (h *ChatHandler) UnreadCount(c *fiber.Ctx) error {
+	result, err := h.usecase.UnreadCount(c.UserContext(), auth.CurrentPrincipal(c))
+	if err != nil {
+		return err
+	}
+	return httpresponse.Success(c, result)
 }
 
 func (h *ChatHandler) List(c *fiber.Ctx) error {

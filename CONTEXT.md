@@ -18,6 +18,10 @@ A user account in a candidate tenant representing an employee managed by that te
 An Employee an Admin has removed from the tenant's active list. They remain that same Employee, with the same code and chat history and with login disabled, until that tenant's Admin creates an Employee with their email again.
 _Avoid_: removed user, archived employee
 
+**Conversation**:
+The single chat thread between one Employee and the Admin who owns them, created together with the Employee.
+_Avoid_: chat room, thread
+
 **Authenticated session**:
 A single sign-in period that can be revoked independently. Disabling an account or resetting a candidate tenant revokes all affected sessions.
 

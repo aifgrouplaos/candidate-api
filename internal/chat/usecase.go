@@ -3,18 +3,23 @@ package chat
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BounkhongDev/bkgo/errs"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/pkg/apierror"
 	"github.com/aifgrouplaos/candidate-api/pkg/pagination"
+	"github.com/google/uuid"
 )
 
 const (
 	defaultMessageLimit = 30
 	maxMessageLimit     = 100
+	maxTextLength       = 2000
 	statusSent          = "sent"
+	statusRead          = "read"
 )
 
 var errForbidden = *errs.Forbidden("You do not have permission to perform this action.")
@@ -29,6 +34,19 @@ type MessageQuery struct {
 	Limit  int    `query:"limit"`
 	Before string `query:"before"`
 	After  string `query:"after"`
+}
+
+type SendInput struct {
+	ClientMessageID string `json:"clientMessageId"`
+	Text            string `json:"text"`
+}
+
+type ReadInput struct {
+	LastReadMessageID string `json:"lastReadMessageId"`
+}
+
+type UnreadCountView struct {
+	Total int64 `json:"total"`
 }
 
 type MessageMeta struct {
@@ -83,6 +101,12 @@ type ChatUsecase interface {
 	Get(ctx context.Context, reader auth.Principal, id string) (*ConversationView, error)
 	// Messages returns one ascending page of a conversation's history.
 	Messages(ctx context.Context, reader auth.Principal, id string, query MessageQuery) ([]*MessageView, MessageMeta, error)
+	// Send saves a message from either participant. Repeating a clientMessageId with the
+	// same text returns the original message; different text is IDEMPOTENCY_CONFLICT.
+	Send(ctx context.Context, sender auth.Principal, id string, input SendInput) (*MessageView, error)
+	// MarkRead advances the reader's read position through the given message.
+	MarkRead(ctx context.Context, reader auth.Principal, id string, input ReadInput) error
+	UnreadCount(ctx context.Context, reader auth.Principal) (*UnreadCountView, error)
 }
 
 type chatUsecase struct {
@@ -168,6 +192,50 @@ func (u *chatUsecase) Messages(ctx context.Context, reader auth.Principal, id st
 	return views, meta, nil
 }
 
+func (u *chatUsecase) Send(ctx context.Context, sender auth.Principal, id string, input SendInput) (*MessageView, error) {
+	if _, err := u.repo.FindByID(ctx, sender, id); err != nil {
+		return nil, err
+	}
+	var v apierror.FieldErrors
+	clientMessageID, err := uuid.Parse(input.ClientMessageID)
+	if err != nil {
+		v.Add("clientMessageId", "clientMessageId must be a UUID.")
+	}
+	if strings.TrimSpace(input.Text) == "" || utf8.RuneCountInString(input.Text) > maxTextLength || strings.ContainsRune(input.Text, 0) {
+		v.Add("text", "Text must be 1 to 2,000 characters of plain text.")
+	}
+	if err := v.Err(); err != nil {
+		return nil, err
+	}
+	stored, err := u.repo.Send(ctx, &Message{ConversationID: id, SenderID: sender.UserID, ClientMessageID: clientMessageID.String(), Text: input.Text})
+	if err != nil {
+		return nil, err
+	}
+	if stored.Text != input.Text {
+		return nil, apierror.IdempotencyConflict
+	}
+	return messageView(stored), nil
+}
+
+func (u *chatUsecase) MarkRead(ctx context.Context, reader auth.Principal, id string, input ReadInput) error {
+	if _, err := u.repo.FindByID(ctx, reader, id); err != nil {
+		return err
+	}
+	err := u.repo.MarkRead(ctx, reader, id, input.LastReadMessageID)
+	if errors.Is(err, errCursorNotFound) {
+		return cursorInvalid("lastReadMessageId", "lastReadMessageId must be a message in this conversation.")
+	}
+	return err
+}
+
+func (u *chatUsecase) UnreadCount(ctx context.Context, reader auth.Principal) (*UnreadCountView, error) {
+	total, err := u.repo.UnreadTotal(ctx, reader)
+	if err != nil {
+		return nil, err
+	}
+	return &UnreadCountView{Total: total}, nil
+}
+
 // messagePage trims the extra row fetched past limit and describes what lies beyond the page.
 func messagePage(messages []*Message, limit int, query MessageQuery) ([]*Message, MessageMeta) {
 	more := len(messages) > limit
@@ -212,11 +280,16 @@ func messageView(m *Message) *MessageView {
 	if m.Sender != nil {
 		sender.FullName, sender.Role = m.Sender.FullName, m.Sender.Role
 	}
-	// ponytail: every stored message reports "sent" until delivery and read positions exist.
-	return &MessageView{
+	// ponytail: "delivered" needs WebSocket receipts, so unread messages report "sent".
+	view := &MessageView{
 		ID: m.ID, ClientMessageID: m.ClientMessageID, ConversationID: m.ConversationID, Sequence: m.Sequence,
 		Sender: sender, Text: m.Text, Status: statusSent, CreatedAt: m.CreatedAt.UTC(),
 	}
+	if m.ReadAt != nil {
+		readAt := m.ReadAt.UTC()
+		view.Status, view.ReadAt = statusRead, &readAt
+	}
+	return view
 }
 
 func cursorInvalid(field, message string) error {
