@@ -1,0 +1,28 @@
+[
+  {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "admin": {
+      "email": "candidate1.admin@example.test",
+      "fullName": "Candidate One Admin",
+      "passwordEnv": "CANDIDATE_1_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate1.employee@example.test",
+      "fullName": "Candidate One Employee",
+      "passwordEnv": "CANDIDATE_1_EMPLOYEE_PASSWORD"
+    }
+  },
+  {
+    "id": "10000000-0000-4000-8000-000000000002",
+    "admin": {
+      "email": "candidate2.admin@example.test",
+      "fullName": "Candidate Two Admin",
+      "passwordEnv": "CANDIDATE_2_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate2.employee@example.test",
+      "fullName": "Candidate Two Employee",
+      "passwordEnv": "CANDIDATE_2_EMPLOYEE_PASSWORD"
+    }
+  }
+]

@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	gormadapter "github.com/BounkhongDev/bkgo/adapter/gorm"
 	"github.com/BounkhongDev/bkgo/adapter/jwt"
@@ -17,6 +21,7 @@ import (
 	"github.com/BounkhongDev/bkgo/config"
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/logger"
+	"github.com/aifgrouplaos/candidate-api/internal/assessment"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/internal/chat"
 	"github.com/aifgrouplaos/candidate-api/internal/employee"
@@ -26,6 +31,7 @@ import (
 	"github.com/aifgrouplaos/candidate-api/pkg/ratelimit"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	miniogo "github.com/minio/minio-go/v7"
 )
 
 func main() {
@@ -37,10 +43,19 @@ func main() {
 
 func run() error {
 	ctx := context.Background()
+	provision := flag.String("assessment-provision", "", "provision two candidate tenants from a local JSON manifest; do not start HTTP")
+	reset := flag.String("assessment-reset", "", "reset one tenant UUID while all API replicas are stopped; do not start HTTP")
+	flag.Parse()
+	if flag.NArg() != 0 || (*provision != "" && *reset != "") {
+		return errors.New("provide one assessment operation or no arguments to start the API")
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("config load failed: %w", err)
+	}
+	if *provision != "" || *reset != "" {
+		return runAssessment(ctx, cfg, *provision, *reset)
 	}
 	trustedProxies, err := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
 	if err != nil {
@@ -116,6 +131,75 @@ func run() error {
 		"jwt", cfg.JWTEnabled,
 	)
 	return app.Listen(":" + cfg.App.Port)
+}
+
+// Operator commands share the composition root, never the HTTP route tree.
+func runAssessment(ctx context.Context, cfg *config.Config, manifest, tenantID string) error {
+	if !cfg.PostgresEnabled {
+		return errors.New("assessment operations require DB_ENABLED=true")
+	}
+	if tenantID != "" && !cfg.MinIOEnabled {
+		return errors.New("reset requires MINIO_ENABLED=true to remove all tenant avatars")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	db, err := openPostgres(cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var cleanup assessment.CleanupAvatars
+	if tenantID != "" {
+		storage, err := minioadapter.New(ctx, cfg.MinIO)
+		if err != nil {
+			return fmt.Errorf("private storage unavailable: %w", err)
+		}
+		cleanup = func(ctx context.Context, id string) error {
+			// List the full prefix, including objects no longer referenced by an Employee.
+			listCtx, stop := context.WithCancel(ctx)
+			defer stop()
+			prefix := "avatars/" + id + "/"
+			for object := range storage.Client().ListObjects(listCtx, cfg.MinIO.Bucket, miniogo.ListObjectsOptions{Prefix: prefix, Recursive: true, WithVersions: true}) {
+				if object.Err != nil {
+					return object.Err
+				}
+				if !strings.HasPrefix(object.Key, prefix) {
+					return errors.New("storage returned an object outside the tenant prefix")
+				}
+				if err := storage.Client().RemoveObject(ctx, cfg.MinIO.Bucket, object.Key, miniogo.RemoveObjectOptions{VersionID: object.VersionID}); err != nil {
+					return err
+				}
+			}
+			return ctx.Err()
+		}
+	}
+	uc := assessment.NewAssessmentUsecase(assessment.NewAssessmentRepository(db), cleanup)
+	if tenantID != "" {
+		if err := uc.Reset(ctx, tenantID); err != nil {
+			return err
+		}
+		fmt.Printf("Reset candidate tenant %s; Admin retained, all sessions revoked.\n", tenantID)
+		return nil
+	}
+	file, err := os.Open(manifest)
+	if err != nil {
+		return errors.New("cannot open assessment manifest")
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(io.LimitReader(file, 64*1024))
+	decoder.DisallowUnknownFields()
+	var tenants []assessment.Tenant
+	if err := decoder.Decode(&tenants); err != nil {
+		return errors.New("invalid assessment JSON manifest")
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return errors.New("assessment manifest must contain one JSON array")
+	}
+	if err := uc.Provision(ctx, tenants, os.Getenv); err != nil {
+		return err
+	}
+	fmt.Println("Provisioned two candidate tenants; existing account credentials unchanged.")
+	return nil
 }
 
 func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
