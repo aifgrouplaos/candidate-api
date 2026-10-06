@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/BounkhongDev/bkgo/errs"
+	"github.com/aifgrouplaos/candidate-api/internal/employee"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -66,7 +67,13 @@ func (u *AssessmentUsecase) Provision(ctx context.Context, tenants []Tenant, get
 		if err != nil {
 			return fmt.Errorf("hash Employee password: %w", err)
 		}
-		prepared[i] = PreparedTenant{Tenant: t, AdminHash: string(a), EmployeeHash: string(e)}
+		prepared[i] = PreparedTenant{
+			Tenant: t, AdminHash: string(a), EmployeeHash: string(e), DepartmentName: "IT",
+			EmployeeProfile: employee.Employee{
+				TenantID: t.ID, EmployeeCode: "EMP-0001", FullName: t.Employee.FullName,
+				Email: t.Employee.Email, Status: employee.StatusActive, Version: 1,
+			},
+		}
 	}
 	return u.repo.Provision(ctx, prepared)
 }

@@ -50,10 +50,12 @@ func (r *assessmentRepository) Provision(ctx context.Context, tenants []Prepared
 					return errs.Conflict("tenant has Employees but its initial Employee is missing; reset first")
 				}
 				var department employee.Department
-				if err := tx.Where("name = ?", "IT").First(&department).Error; err != nil {
+				if err := tx.Where("name = ?", t.DepartmentName).First(&department).Error; err != nil {
 					return err
 				}
-				e = employee.Employee{TenantID: t.Tenant.ID, UserID: &login.ID, EmployeeCode: "EMP-0001", FullName: login.FullName, Email: login.Email, Status: employee.StatusActive, DepartmentID: &department.ID, Version: 1}
+				e = t.EmployeeProfile
+				e.UserID = &login.ID
+				e.DepartmentID = &department.ID
 				if err := tx.Create(&e).Error; err != nil {
 					return err
 				}

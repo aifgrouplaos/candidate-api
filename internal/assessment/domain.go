@@ -1,6 +1,10 @@
 package assessment
 
-import "context"
+import (
+	"context"
+
+	"github.com/aifgrouplaos/candidate-api/internal/employee"
+)
 
 // Account references an environment variable rather than embedding a password.
 type Account struct {
@@ -16,9 +20,11 @@ type Tenant struct {
 }
 
 type PreparedTenant struct {
-	Tenant       Tenant
-	AdminHash    string
-	EmployeeHash string
+	Tenant          Tenant
+	AdminHash       string
+	EmployeeHash    string
+	EmployeeProfile employee.Employee
+	DepartmentName  string
 }
 
 type AssessmentRepository interface {
