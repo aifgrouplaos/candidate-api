@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
@@ -164,17 +165,40 @@ func (r *chatRepository) Send(ctx context.Context, m *Message) (*Message, error)
 	return &stored, r.db.Session(ctx).Preload("Sender").First(&stored, whereID, id).Error
 }
 
-func (r *chatRepository) MarkRead(ctx context.Context, reader auth.Principal, conversationID, messageID string) error {
+func (r *chatRepository) Acknowledge(ctx context.Context, reader auth.Principal, conversationID, messageID string, read bool) ([]*Message, error) {
 	sequence, err := r.sequence(ctx, conversationID, messageID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	// Only unread messages change, so an older message never moves the read position back.
-	// ponytail: one row update per newly read message; a stored per-participant position
-	// would make this O(1) if conversations grow very long.
-	return r.db.Session(ctx).Model(&Message{}).
-		Where("conversation_id = ? AND sequence <= ? AND sender_id <> ? AND read_at IS NULL", conversationID, sequence, reader.UserID).
-		Update("read_at", time.Now()).Error
+	now := time.Now()
+	column, values := "delivered_at", map[string]any{"delivered_at": now}
+	if read {
+		column, values = "read_at", map[string]any{"read_at": now, "delivered_at": gorm.Expr("COALESCE(delivered_at, ?)", now)}
+	}
+	// Only unacknowledged messages change, so an older message never moves a position back.
+	// ponytail: one row update per newly acknowledged message; a stored per-participant
+	// position would make this O(1) if conversations grow very long.
+	changed := []*Message{}
+	err = r.db.Session(ctx).Model(&changed).Clauses(clause.Returning{}).
+		Where("conversation_id = ? AND sequence <= ? AND sender_id <> ? AND "+column+" IS NULL", conversationID, sequence, reader.UserID).
+		Updates(values).Error
+	slices.SortFunc(changed, func(a, b *Message) int { return cmp.Compare(a.Sequence, b.Sequence) })
+	return changed, err
+}
+
+func (r *chatRepository) Participants(ctx context.Context, conversationID string) ([]auth.Principal, error) {
+	participants := []auth.Principal{}
+	err := r.db.Session(ctx).Raw(`SELECT u.id AS user_id, u.tenant_id, u.role FROM conversations c
+		JOIN users u ON u.tenant_id = c.tenant_id AND u.active
+		LEFT JOIN employees e ON e.id = c.employee_id AND e.deleted_at IS NULL
+		WHERE c.id = ? AND (u.role = ? OR u.id = e.user_id)`, conversationID, auth.RoleAdmin).Scan(&participants).Error
+	return participants, err
+}
+
+func (r *chatRepository) Counterparts(ctx context.Context, user auth.Principal) ([]string, error) {
+	ids := []string{}
+	err := r.db.Session(ctx).Model(&auth.User{}).Where("tenant_id = ? AND active AND role <> ?", user.TenantID, user.Role).Pluck("id", &ids).Error
+	return ids, err
 }
 
 func (r *chatRepository) UnreadTotal(ctx context.Context, reader auth.Principal) (int64, error) {

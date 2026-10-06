@@ -191,7 +191,9 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 		employees := employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db, chat.ProvisionConversation), store, cfg.MinIO.Bucket)
 		employee.NewEmployeeHandler(employees).RegisterRoutes(api, protected...)
 		project.NewProjectHandler(project.NewProjectUsecase(project.NewProjectRepository(db))).RegisterRoutes(api, protected...)
-		chat.NewChatHandler(chat.NewChatUsecase(chat.NewChatRepository(db), employees.AvatarURL)).RegisterRoutes(api, protected...)
+		chatHandler := chat.NewChatHandler(chat.NewChatUsecase(chat.NewChatRepository(db), employees.AvatarURL, authRepository))
+		chatHandler.RegisterRoutes(api, protected...)
+		chatHandler.RegisterWebSocket(app, strings.Split(allowedOrigins, ","))
 	}
 	return app
 }

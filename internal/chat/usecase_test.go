@@ -91,17 +91,40 @@ func (r *memoryRepository) Send(_ context.Context, m *Message) (*Message, error)
 	return m, nil
 }
 
-func (r *memoryRepository) MarkRead(_ context.Context, reader auth.Principal, _, messageID string) error {
+func (r *memoryRepository) Acknowledge(_ context.Context, reader auth.Principal, _, messageID string, read bool) ([]*Message, error) {
 	i := r.index(messageID)
 	if i < 0 {
-		return errCursorNotFound
+		return nil, errCursorNotFound
 	}
+	at := time.Date(2026, 10, 5, 8, 30, 0, 0, time.UTC)
+	changed := []*Message{}
 	for _, m := range r.messages[:i+1] {
-		if m.SenderID != reader.UserID && m.ReadAt == nil {
-			m.ReadAt = ptr(time.Date(2026, 10, 5, 8, 30, 0, 0, time.UTC))
+		if m.SenderID == reader.UserID || m.ReadAt != nil || (!read && m.DeliveredAt != nil) {
+			continue
 		}
+		if m.DeliveredAt == nil {
+			m.DeliveredAt = ptr(at)
+		}
+		if read {
+			m.ReadAt = ptr(at)
+		}
+		changed = append(changed, m)
 	}
-	return nil
+	return changed, nil
+}
+
+func (r *memoryRepository) Participants(context.Context, string) ([]auth.Principal, error) {
+	return []auth.Principal{adminA, employeeA}, nil
+}
+
+func (r *memoryRepository) Counterparts(_ context.Context, user auth.Principal) ([]string, error) {
+	switch user.UserID {
+	case adminA.UserID:
+		return []string{employeeA.UserID}, nil
+	case employeeA.UserID:
+		return []string{adminA.UserID}, nil
+	}
+	return nil, nil
 }
 
 func (r *memoryRepository) UnreadTotal(_ context.Context, reader auth.Principal) (int64, error) {
@@ -158,7 +181,7 @@ func ids(messages []*MessageView) string {
 
 func TestListPresentsConversationsWithSignedAvatar(t *testing.T) {
 	repo := &memoryRepository{}
-	views, meta, err := NewChatUsecase(repo, signAvatar).List(context.Background(), adminA, ListQuery{Query: pagination.Query{Page: 2, Limit: 5, Search: "  som  "}, UnreadOnly: true})
+	views, meta, err := NewChatUsecase(repo, signAvatar, activeSessions{}).List(context.Background(), adminA, ListQuery{Query: pagination.Query{Page: 2, Limit: 5, Search: "  som  "}, UnreadOnly: true})
 	if err != nil || len(views) != 1 {
 		t.Fatalf("views = %v, err %v", views, err)
 	}
@@ -176,7 +199,7 @@ func TestListPresentsConversationsWithSignedAvatar(t *testing.T) {
 }
 
 func TestConversationLastMessagePreview(t *testing.T) {
-	view, err := NewChatUsecase(newRepositoryWithMessages(2), signAvatar).Get(context.Background(), adminA, "c1")
+	view, err := NewChatUsecase(newRepositoryWithMessages(2), signAvatar, activeSessions{}).Get(context.Background(), adminA, "c1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,14 +210,14 @@ func TestConversationLastMessagePreview(t *testing.T) {
 }
 
 func TestListRejectsOverlongSearch(t *testing.T) {
-	_, _, err := NewChatUsecase(&memoryRepository{}, signAvatar).List(context.Background(), adminA, ListQuery{Query: pagination.Query{Search: strings.Repeat("a", 101)}})
+	_, _, err := NewChatUsecase(&memoryRepository{}, signAvatar, activeSessions{}).List(context.Background(), adminA, ListQuery{Query: pagination.Query{Search: strings.Repeat("a", 101)}})
 	if errorCode(err) != "VALIDATION_ERROR" {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestOpenReturnsTheEmployeesConversation(t *testing.T) {
-	uc := NewChatUsecase(&memoryRepository{}, signAvatar)
+	uc := NewChatUsecase(&memoryRepository{}, signAvatar, activeSessions{})
 	view, err := uc.Open(context.Background(), employeeA)
 	if err != nil || view.ID != "c1" {
 		t.Fatalf("view = %+v, err %v", view, err)
@@ -205,7 +228,7 @@ func TestOpenReturnsTheEmployeesConversation(t *testing.T) {
 }
 
 func TestGetAndMessagesRequireParticipant(t *testing.T) {
-	uc := NewChatUsecase(newRepositoryWithMessages(1), signAvatar)
+	uc := NewChatUsecase(newRepositoryWithMessages(1), signAvatar, activeSessions{})
 	for _, reader := range []auth.Principal{adminB, otherA} {
 		if _, err := uc.Get(context.Background(), reader, "c1"); errorCode(err) != "NOT_FOUND" {
 			t.Fatalf("%s get err = %v", reader.UserID, err)
@@ -222,7 +245,7 @@ func TestGetAndMessagesRequireParticipant(t *testing.T) {
 }
 
 func TestMessagesCursorPages(t *testing.T) {
-	uc := NewChatUsecase(newRepositoryWithMessages(5), signAvatar)
+	uc := NewChatUsecase(newRepositoryWithMessages(5), signAvatar, activeSessions{})
 	cases := []struct {
 		name  string
 		query MessageQuery
@@ -252,7 +275,7 @@ func TestMessagesCursorPages(t *testing.T) {
 }
 
 func TestMessagesLimitDefaultsAndCap(t *testing.T) {
-	uc := NewChatUsecase(newRepositoryWithMessages(120), signAvatar)
+	uc := NewChatUsecase(newRepositoryWithMessages(120), signAvatar, activeSessions{})
 	for limit, want := range map[int]int{0: 30, -1: 30, 100: 100, 500: 100} {
 		messages, _, err := uc.Messages(context.Background(), adminA, "c1", MessageQuery{Limit: limit})
 		if err != nil || len(messages) != want {
@@ -262,7 +285,7 @@ func TestMessagesLimitDefaultsAndCap(t *testing.T) {
 }
 
 func TestMessagesEmptyHistory(t *testing.T) {
-	messages, meta, err := NewChatUsecase(&memoryRepository{}, signAvatar).Messages(context.Background(), adminA, "c1", MessageQuery{})
+	messages, meta, err := NewChatUsecase(&memoryRepository{}, signAvatar, activeSessions{}).Messages(context.Background(), adminA, "c1", MessageQuery{})
 	got, _ := json.Marshal(messages)
 	gotMeta, _ := json.Marshal(meta)
 	if err != nil || string(got) != "[]" || string(gotMeta) != `{"hasMoreBefore":false,"hasMoreAfter":false,"nextBefore":null}` {
@@ -271,7 +294,7 @@ func TestMessagesEmptyHistory(t *testing.T) {
 }
 
 func TestMessagesRejectsInvalidCursors(t *testing.T) {
-	uc := NewChatUsecase(newRepositoryWithMessages(2), signAvatar)
+	uc := NewChatUsecase(newRepositoryWithMessages(2), signAvatar, activeSessions{})
 	for _, query := range []MessageQuery{{Before: "m2", After: "m1"}, {Before: "missing"}, {After: "missing"}} {
 		if _, _, err := uc.Messages(context.Background(), adminA, "c1", query); errorCode(err) != "VALIDATION_ERROR" {
 			t.Fatalf("%+v: err = %v", query, err)
@@ -283,7 +306,7 @@ const clientID = "8f14e45f-ceea-467f-a8f1-6d1b8c2a0001"
 
 func TestSendIsIdempotentPerClientMessageID(t *testing.T) {
 	repo := newRepositoryWithMessages(2)
-	uc := NewChatUsecase(repo, signAvatar)
+	uc := NewChatUsecase(repo, signAvatar, activeSessions{})
 	ctx := context.Background()
 
 	sent, err := uc.Send(ctx, adminA, "c1", SendInput{ClientMessageID: strings.ToUpper(clientID), Text: "Hello"})
@@ -303,7 +326,7 @@ func TestSendIsIdempotentPerClientMessageID(t *testing.T) {
 }
 
 func TestSendValidatesPayload(t *testing.T) {
-	uc := NewChatUsecase(&memoryRepository{}, signAvatar)
+	uc := NewChatUsecase(&memoryRepository{}, signAvatar, activeSessions{})
 	for _, input := range []SendInput{
 		{ClientMessageID: "not-a-uuid", Text: "hi"},
 		{ClientMessageID: clientID, Text: ""},
@@ -322,7 +345,7 @@ func TestSendValidatesPayload(t *testing.T) {
 
 func TestSendAndReadRequireParticipant(t *testing.T) {
 	repo := newRepositoryWithMessages(1)
-	uc := NewChatUsecase(repo, signAvatar)
+	uc := NewChatUsecase(repo, signAvatar, activeSessions{})
 	for _, reader := range []auth.Principal{adminB, otherA} {
 		if _, err := uc.Send(context.Background(), reader, "c1", SendInput{ClientMessageID: clientID, Text: "hi"}); errorCode(err) != "NOT_FOUND" {
 			t.Fatalf("%s send err = %v", reader.UserID, err)
@@ -337,7 +360,7 @@ func TestSendAndReadRequireParticipant(t *testing.T) {
 }
 
 func TestMarkReadExposesReadState(t *testing.T) {
-	uc := NewChatUsecase(newRepositoryWithMessages(3), signAvatar)
+	uc := NewChatUsecase(newRepositoryWithMessages(3), signAvatar, activeSessions{})
 	ctx := context.Background()
 	if err := uc.MarkRead(ctx, adminA, "c1", ReadInput{LastReadMessageID: "m2"}); err != nil {
 		t.Fatal(err)
@@ -357,8 +380,30 @@ func TestMarkReadExposesReadState(t *testing.T) {
 	}
 }
 
+func TestReadingALongBacklogKeepsLiveSessions(t *testing.T) {
+	uc := NewChatUsecase(newRepositoryWithMessages(200), signAvatar, activeSessions{})
+	ctx := context.Background()
+	ticket, _ := uc.IssueTicket(ctx, adminA)
+	session, err := uc.Connect(ctx, ticket.Ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uc.MarkRead(ctx, adminA, "c1", ReadInput{LastReadMessageID: "m200"}); err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for len(session.Outbox()) > 0 {
+		var e struct{ Type string }
+		json.Unmarshal(<-session.Outbox(), &e)
+		types = append(types, e.Type)
+	}
+	if strings.Join(types, ",") != "message.status,conversation.updated,unread.updated" {
+		t.Fatalf("events = %v", types)
+	}
+}
+
 func TestMessageView(t *testing.T) {
-	messages, _, err := NewChatUsecase(newRepositoryWithMessages(1), signAvatar).Messages(context.Background(), adminA, "c1", MessageQuery{})
+	messages, _, err := NewChatUsecase(newRepositoryWithMessages(1), signAvatar, activeSessions{}).Messages(context.Background(), adminA, "c1", MessageQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}

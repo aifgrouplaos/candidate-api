@@ -263,11 +263,13 @@ func (s *sendFixture) mustSend(sender auth.Principal, clientID, text string) *Me
 	return m
 }
 
-func (s *sendFixture) markRead(reader auth.Principal, messageID string) {
+func (s *sendFixture) markRead(reader auth.Principal, messageID string) []*Message {
 	s.t.Helper()
-	if err := s.repo.MarkRead(context.Background(), reader, s.conversation, messageID); err != nil {
+	changed, err := s.repo.Acknowledge(context.Background(), reader, s.conversation, messageID, true)
+	if err != nil {
 		s.t.Fatal(err)
 	}
+	return changed
 }
 
 // wantUnread checks reader's conversation unread count and aggregate total agree on want.
@@ -339,8 +341,49 @@ func TestMarkReadAgainstPostgres(t *testing.T) {
 	s.wantUnread(s.admin, 0)
 	wantInbox(t, s.repo, s.admin, ConversationFilter{UnreadOnly: true}, "")
 	s.wantUnread(s.somchai, 1)
-	if err := s.repo.MarkRead(context.Background(), s.admin, s.conversation, "not-a-uuid"); !errors.Is(err, errCursorNotFound) {
+	if _, err := s.repo.Acknowledge(context.Background(), s.admin, s.conversation, "not-a-uuid", true); !errors.Is(err, errCursorNotFound) {
 		t.Fatalf("bad id err = %v", err)
+	}
+}
+
+func TestAcknowledgeDeliveryAgainstPostgres(t *testing.T) {
+	s := newSendFixture(t)
+	ctx := context.Background()
+	var sent []*Message
+	for i := 1; i <= 3; i++ {
+		sent = append(sent, s.mustSend(s.somchai, nthClientID(i), "hi"))
+	}
+	reply := s.mustSend(s.admin, nthClientID(1), "reply")
+
+	// Delivery returns only the other participant's newly delivered messages, in order.
+	changed, err := s.repo.Acknowledge(ctx, s.admin, s.conversation, reply.ID, false)
+	if err != nil || len(changed) != 3 || changed[0].ID != sent[0].ID || changed[2].DeliveredAt == nil || changed[2].ReadAt != nil {
+		t.Fatalf("delivered = %+v, err %v", changed, err)
+	}
+	if again, _ := s.repo.Acknowledge(ctx, s.admin, s.conversation, reply.ID, false); len(again) != 0 {
+		t.Fatalf("redelivered = %+v", again)
+	}
+	s.wantUnread(s.admin, 3)
+
+	// Reading keeps the delivery time and returns each newly read message.
+	if read := s.markRead(s.admin, sent[1].ID); len(read) != 2 || read[1].ReadAt == nil || !read[1].DeliveredAt.Equal(*changed[1].DeliveredAt) {
+		t.Fatalf("read = %+v", read)
+	}
+
+	participants, err := s.repo.Participants(ctx, s.conversation)
+	if err != nil || len(participants) != 2 {
+		t.Fatalf("participants = %+v, err %v", participants, err)
+	}
+	for _, p := range participants {
+		if (p != auth.Principal{UserID: p.UserID, TenantID: tenantA, Role: p.Role}) || (p.UserID != s.admin.UserID && p.UserID != s.somchai.UserID) {
+			t.Fatalf("participant = %+v", p)
+		}
+	}
+	if ids, err := s.repo.Counterparts(ctx, s.somchai); err != nil || len(ids) != 1 || ids[0] != s.admin.UserID {
+		t.Fatalf("employee counterparts = %v, err %v", ids, err)
+	}
+	if ids, err := s.repo.Counterparts(ctx, s.admin); err != nil || len(ids) != 2 {
+		t.Fatalf("admin counterparts = %v, err %v", ids, err)
 	}
 }
 
