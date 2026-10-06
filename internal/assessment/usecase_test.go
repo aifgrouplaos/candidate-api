@@ -3,6 +3,7 @@ package assessment_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/aifgrouplaos/candidate-api/internal/assessment"
@@ -43,6 +44,45 @@ func tenants() []assessment.Tenant {
 	return []assessment.Tenant{
 		{ID: "00000000-0000-4000-8000-000000000001", Admin: assessment.Account{Email: "admin1@example.test", FullName: "Admin One", PasswordEnv: "A1"}, Employee: assessment.Account{Email: "employee1@example.test", FullName: "Employee One", PasswordEnv: "E1"}},
 		{ID: "00000000-0000-4000-8000-000000000002", Admin: assessment.Account{Email: "admin2@example.test", FullName: "Admin Two", PasswordEnv: "A2"}, Employee: assessment.Account{Email: "employee2@example.test", FullName: "Employee Two", PasswordEnv: "E2"}},
+	}
+}
+
+func tenCandidates() []assessment.Tenant {
+	result := make([]assessment.Tenant, 10)
+	for i := range result {
+		n := i + 1
+		result[i] = assessment.Tenant{
+			ID:       fmt.Sprintf("10000000-0000-4000-8000-%012d", n),
+			Admin:    assessment.Account{Email: fmt.Sprintf("candidate%d.admin@example.test", n), FullName: "Candidate Admin", PasswordEnv: fmt.Sprintf("CANDIDATE_%d_ADMIN_PASSWORD", n)},
+			Employee: assessment.Account{Email: fmt.Sprintf("candidate%d.employee@example.test", n), FullName: "Candidate Employee", PasswordEnv: fmt.Sprintf("CANDIDATE_%d_EMPLOYEE_PASSWORD", n)},
+		}
+	}
+	return result
+}
+
+func TestProvisionTenCandidates(t *testing.T) {
+	var prepared []assessment.PreparedTenant
+	manifest := tenCandidates()
+	uc := assessment.NewAssessmentUsecase(repository{provision: func(ts []assessment.PreparedTenant) error { prepared = ts; return nil }}, nil)
+	if err := uc.Provision(context.Background(), manifest, func(string) string { return "test-only-password" }); err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared) != 10 {
+		t.Fatalf("tenants=%d; want 10", len(prepared))
+	}
+	for i, tenant := range prepared {
+		if tenant.Tenant.ID != manifest[i].ID || tenant.EmployeeProfile.TenantID != tenant.Tenant.ID {
+			t.Fatalf("candidate %d lost its tenant identity", i+1)
+		}
+	}
+}
+
+func TestProvisionRejectsEmptyOrOversizedManifest(t *testing.T) {
+	uc := assessment.NewAssessmentUsecase(repository{}, nil)
+	for _, manifest := range [][]assessment.Tenant{nil, make([]assessment.Tenant, 101)} {
+		if err := uc.Provision(context.Background(), manifest, func(string) string { t.Fatal("invalid manifest read passwords"); return "" }); err == nil {
+			t.Fatal("accepted an empty or oversized manifest")
+		}
 	}
 }
 

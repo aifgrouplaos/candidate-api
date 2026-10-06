@@ -43,7 +43,7 @@ func main() {
 
 func run() error {
 	ctx := context.Background()
-	provision := flag.String("assessment-provision", "", "provision two candidate tenants from a local JSON manifest; do not start HTTP")
+	provision := flag.String("assessment-provision", "", "provision candidate tenants from a local JSON manifest; do not start HTTP")
 	reset := flag.String("assessment-reset", "", "reset one tenant UUID while all API replicas are stopped; do not start HTTP")
 	flag.Parse()
 	if flag.NArg() != 0 || (*provision != "" && *reset != "") {
@@ -198,7 +198,7 @@ func runAssessment(ctx context.Context, cfg *config.Config, manifest, tenantID s
 	if err := uc.Provision(ctx, tenants, os.Getenv); err != nil {
 		return err
 	}
-	fmt.Println("Provisioned two candidate tenants; existing account credentials unchanged.")
+	fmt.Printf("Provisioned %d candidate tenants; existing account credentials unchanged.\n", len(tenants))
 	return nil
 }
 

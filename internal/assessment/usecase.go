@@ -23,8 +23,8 @@ func NewAssessmentUsecase(repo AssessmentRepository, cleanup CleanupAvatars) *As
 
 // Provision validates all accounts before hashing or changing persistence.
 func (u *AssessmentUsecase) Provision(ctx context.Context, tenants []Tenant, getenv func(string) string) error {
-	if len(tenants) != 2 {
-		return errs.BadRequest("provide exactly two candidate tenants")
+	if len(tenants) < 1 || len(tenants) > 100 {
+		return errs.BadRequest("provide between 1 and 100 candidate tenants")
 	}
 	ids, emails := map[string]bool{}, map[string]bool{}
 	passwords := make([][2]string, len(tenants))
@@ -42,7 +42,7 @@ func (u *AssessmentUsecase) Provision(ctx context.Context, tenants []Tenant, get
 			a.FullName = strings.TrimSpace(a.FullName)
 			parsed, err := mail.ParseAddress(a.Email)
 			if err != nil || parsed.Address != a.Email || len(a.Email) > 254 || emails[a.Email] {
-				return errs.BadRequest("provide four distinct valid emails")
+				return errs.BadRequest("provide distinct valid emails for every account")
 			}
 			emails[a.Email] = true
 			if n := len([]rune(a.FullName)); n < 2 || n > 100 {

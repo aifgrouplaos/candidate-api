@@ -176,3 +176,20 @@ func TestUnknownTenantResetDoesNotTouchStorage(t *testing.T) {
 		t.Fatal("accepted unknown tenant")
 	}
 }
+
+func TestProvisionTenCandidateTenantsAgainstPostgres(t *testing.T) {
+	db := assessmentDB(t)
+	uc := assessment.NewAssessmentUsecase(assessment.NewAssessmentRepository(db), nil)
+	for range 2 {
+		if err := uc.Provision(context.Background(), tenCandidates(), func(string) string { return "test-only-password" }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCount(t, db.Raw().Model(&auth.User{}), 20)
+	for _, tenant := range tenCandidates() {
+		assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ? AND role = ? AND active = ?", tenant.ID, auth.RoleAdmin, true), 1)
+		assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ? AND role = ? AND active = ?", tenant.ID, auth.RoleEmployee, true), 1)
+		assertCount(t, db.Raw().Model(&employee.Employee{}).Where("tenant_id = ?", tenant.ID), 1)
+		assertCount(t, db.Raw().Model(&chat.Conversation{}).Where("tenant_id = ?", tenant.ID), 1)
+	}
+}

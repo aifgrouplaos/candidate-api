@@ -12,7 +12,10 @@ the repository root with the same database and bucket settings as the API.
    Enable JWT for candidate login (`JWT_ENABLED=true` and a signing secret of
    at least 32 bytes). Explicit `APP_ENV=development` skips rate limits locally.
 2. Copy `assessment.example.json` to ignored `assessment.local.json`.
-   Choose two distinct canonical, nonzero UUIDs and four globally distinct emails.
+   The example contains **10 candidates = 10 isolated tenants**, each with its own
+   Admin and initial Employee login (20 accounts total). Manifests accept 1–100
+   tenants. Choose a distinct canonical, nonzero UUID per candidate and globally
+   distinct emails for every account.
    Keep these UUIDs for later reset. The manifest references password environment
    variable names; it contains no passwords. Supply each password in the ignored
    `.env`, process environment, or operator secret manager (8–72 bytes).
@@ -28,7 +31,7 @@ the repository root with the same database and bucket settings as the API.
    go run ./cmd/api -assessment-provision assessment.local.json
    ```
 
-Provision creates both tenants atomically, with one active Admin and one active,
+Provision creates all manifest tenants atomically, with one active Admin and one active,
 login-enabled Employee each. Each Employee starts with code `EMP-0001`, the IT
 department, and its Admin conversation. Repeating setup preserves existing account
 IDs, profiles, passwords, and assessment work; an email in another tenant, an
@@ -72,7 +75,7 @@ or legal holds can prevent deletion; resolve those operator settings before retr
 Reset removes persisted avatar objects; previously downloaded client copies
 cannot be revoked.
 
-To reuse a tenant, run the same two-tenant provisioning manifest again. It recreates
+To reuse a tenant, run the provisioning manifest again. It recreates
 the missing initial Employee and conversation while preserving the other tenant's
 accounts and data. The retained Admin needs to sign in again. Restart API replicas
 only after reset/setup succeeds.
@@ -86,7 +89,9 @@ $env:TEST_POSTGRES_DSN='host=localhost port=5435 user=postgres password=secret d
 go test ./internal/assessment -count=1 -v
 ```
 
-The tests provision twice, preserve IDs/password hashes, populate both tenants
+The tests verify ten-candidate setup creates ten tenants and twenty active accounts
+without duplicating records on repetition. They also provision twice, preserve
+IDs/password hashes, populate two tenants
 with sessions, messages and nested Projects, include a Deleted Employee, reset
 one tenant twice, and verify that the other tenant and shared departments remain.
 They also cover invalid/unknown tenants, conflicting emails and cleanup failure.
@@ -94,7 +99,7 @@ Without `TEST_POSTGRES_DSN`, the database tests skip.
 
 For storage and candidate login verification in a disposable assessment environment:
 
-1. Provision the manifest twice; log in as all four accounts. Verify five departments,
+1. Provision the manifest twice; log in as every configured account. Verify five departments,
    task types and priorities, and each Employee's initial conversation.
 2. Upload an avatar in each tenant, send a chat message, and create a Project with a
    Phase and Task in each tenant. Keep both tenants' tokens and Project IDs.

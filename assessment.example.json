@@ -3,12 +3,12 @@
     "id": "10000000-0000-4000-8000-000000000001",
     "admin": {
       "email": "candidate1.admin@example.test",
-      "fullName": "Candidate One Admin",
+      "fullName": "Candidate 1 Admin",
       "passwordEnv": "CANDIDATE_1_ADMIN_PASSWORD"
     },
     "employee": {
       "email": "candidate1.employee@example.test",
-      "fullName": "Candidate One Employee",
+      "fullName": "Candidate 1 Employee",
       "passwordEnv": "CANDIDATE_1_EMPLOYEE_PASSWORD"
     }
   },
@@ -16,13 +16,117 @@
     "id": "10000000-0000-4000-8000-000000000002",
     "admin": {
       "email": "candidate2.admin@example.test",
-      "fullName": "Candidate Two Admin",
+      "fullName": "Candidate 2 Admin",
       "passwordEnv": "CANDIDATE_2_ADMIN_PASSWORD"
     },
     "employee": {
       "email": "candidate2.employee@example.test",
-      "fullName": "Candidate Two Employee",
+      "fullName": "Candidate 2 Employee",
       "passwordEnv": "CANDIDATE_2_EMPLOYEE_PASSWORD"
+    }
+  },
+  {
+    "id": "10000000-0000-4000-8000-000000000003",
+    "admin": {
+      "email": "candidate3.admin@example.test",
+      "fullName": "Candidate 3 Admin",
+      "passwordEnv": "CANDIDATE_3_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate3.employee@example.test",
+      "fullName": "Candidate 3 Employee",
+      "passwordEnv": "CANDIDATE_3_EMPLOYEE_PASSWORD"
+    }
+  },
+  {
+    "id": "10000000-0000-4000-8000-000000000004",
+    "admin": {
+      "email": "candidate4.admin@example.test",
+      "fullName": "Candidate 4 Admin",
+      "passwordEnv": "CANDIDATE_4_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate4.employee@example.test",
+      "fullName": "Candidate 4 Employee",
+      "passwordEnv": "CANDIDATE_4_EMPLOYEE_PASSWORD"
+    }
+  },
+  {
+    "id": "10000000-0000-4000-8000-000000000005",
+    "admin": {
+      "email": "candidate5.admin@example.test",
+      "fullName": "Candidate 5 Admin",
+      "passwordEnv": "CANDIDATE_5_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate5.employee@example.test",
+      "fullName": "Candidate 5 Employee",
+      "passwordEnv": "CANDIDATE_5_EMPLOYEE_PASSWORD"
+    }
+  },
+  {
+    "id": "10000000-0000-4000-8000-000000000006",
+    "admin": {
+      "email": "candidate6.admin@example.test",
+      "fullName": "Candidate 6 Admin",
+      "passwordEnv": "CANDIDATE_6_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate6.employee@example.test",
+      "fullName": "Candidate 6 Employee",
+      "passwordEnv": "CANDIDATE_6_EMPLOYEE_PASSWORD"
+    }
+  },
+  {
+    "id": "10000000-0000-4000-8000-000000000007",
+    "admin": {
+      "email": "candidate7.admin@example.test",
+      "fullName": "Candidate 7 Admin",
+      "passwordEnv": "CANDIDATE_7_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate7.employee@example.test",
+      "fullName": "Candidate 7 Employee",
+      "passwordEnv": "CANDIDATE_7_EMPLOYEE_PASSWORD"
+    }
+  },
+  {
+    "id": "10000000-0000-4000-8000-000000000008",
+    "admin": {
+      "email": "candidate8.admin@example.test",
+      "fullName": "Candidate 8 Admin",
+      "passwordEnv": "CANDIDATE_8_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate8.employee@example.test",
+      "fullName": "Candidate 8 Employee",
+      "passwordEnv": "CANDIDATE_8_EMPLOYEE_PASSWORD"
+    }
+  },
+  {
+    "id": "10000000-0000-4000-8000-000000000009",
+    "admin": {
+      "email": "candidate9.admin@example.test",
+      "fullName": "Candidate 9 Admin",
+      "passwordEnv": "CANDIDATE_9_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate9.employee@example.test",
+      "fullName": "Candidate 9 Employee",
+      "passwordEnv": "CANDIDATE_9_EMPLOYEE_PASSWORD"
+    }
+  },
+  {
+    "id": "10000000-0000-4000-8000-000000000010",
+    "admin": {
+      "email": "candidate10.admin@example.test",
+      "fullName": "Candidate 10 Admin",
+      "passwordEnv": "CANDIDATE_10_ADMIN_PASSWORD"
+    },
+    "employee": {
+      "email": "candidate10.employee@example.test",
+      "fullName": "Candidate 10 Employee",
+      "passwordEnv": "CANDIDATE_10_EMPLOYEE_PASSWORD"
     }
   }
 ]
