@@ -35,8 +35,10 @@ type Message struct {
 	ClientMessageID string     `gorm:"not null;uniqueIndex:idx_messages_client_message"`
 	Text            string     `gorm:"not null"`
 	CreatedAt       time.Time  `gorm:"autoCreateTime"`
-	// ReadAt is when the recipient's read position first reached this message.
-	ReadAt *time.Time
+	// DeliveredAt and ReadAt are when the recipient's delivery and read positions first
+	// reached this message; reading also delivers.
+	DeliveredAt *time.Time
+	ReadAt      *time.Time
 }
 
 func (Message) TableName() string { return "messages" }
@@ -78,10 +80,16 @@ type ChatRepository interface {
 	// the top of the inbox, unless m's sender already sent its ClientMessageID there. It
 	// returns the stored message with its Sender either way. It does not authorize.
 	Send(ctx context.Context, m *Message) (*Message, error)
-	// MarkRead marks the other participant's messages through messageID as read by reader.
-	// It returns errCursorNotFound when messageID is not in the conversation. It does not
-	// authorize.
-	MarkRead(ctx context.Context, reader auth.Principal, conversationID, messageID string) error
+	// Acknowledge marks the other participant's messages through messageID as delivered to,
+	// or read by, reader and returns the messages whose status changed. It returns
+	// errCursorNotFound when messageID is not in the conversation. It does not authorize.
+	Acknowledge(ctx context.Context, reader auth.Principal, conversationID, messageID string, read bool) ([]*Message, error)
 	// UnreadTotal counts reader's unread messages across the conversations reader may access.
 	UnreadTotal(ctx context.Context, reader auth.Principal) (int64, error)
+	// Participants returns the active users who may access the conversation: its live
+	// Employee's login and the tenant's Admin. SessionID is empty.
+	Participants(ctx context.Context, conversationID string) ([]auth.Principal, error)
+	// Counterparts returns the IDs of the active users user can chat with: the tenant's
+	// Admin for an Employee, and the tenant's Employee logins for an Admin.
+	Counterparts(ctx context.Context, user auth.Principal) ([]string, error)
 }
