@@ -380,6 +380,28 @@ func TestMarkReadExposesReadState(t *testing.T) {
 	}
 }
 
+func TestReadingALongBacklogKeepsLiveSessions(t *testing.T) {
+	uc := NewChatUsecase(newRepositoryWithMessages(200), signAvatar, activeSessions{})
+	ctx := context.Background()
+	ticket, _ := uc.IssueTicket(ctx, adminA)
+	session, err := uc.Connect(ctx, ticket.Ticket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uc.MarkRead(ctx, adminA, "c1", ReadInput{LastReadMessageID: "m200"}); err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for len(session.Outbox()) > 0 {
+		var e struct{ Type string }
+		json.Unmarshal(<-session.Outbox(), &e)
+		types = append(types, e.Type)
+	}
+	if strings.Join(types, ",") != "message.status,conversation.updated,unread.updated" {
+		t.Fatalf("events = %v", types)
+	}
+}
+
 func TestMessageView(t *testing.T) {
 	messages, _, err := NewChatUsecase(newRepositoryWithMessages(1), signAvatar, activeSessions{}).Messages(context.Background(), adminA, "c1", MessageQuery{})
 	if err != nil {

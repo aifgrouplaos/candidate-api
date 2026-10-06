@@ -14,8 +14,6 @@ require (
 	gorm.io/gorm v1.31.1
 )
 
-require github.com/savsgio/gotils v0.0.0-20240303185622-093b76447511 // indirect
-
 require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
@@ -38,6 +36,7 @@ require (
 	github.com/minio/minio-go/v7 v7.0.70 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/rs/xid v1.5.0 // indirect
+	github.com/savsgio/gotils v0.0.0-20240303185622-093b76447511 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.52.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect

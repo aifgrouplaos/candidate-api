@@ -294,12 +294,10 @@ func (u *chatUsecase) acknowledge(ctx context.Context, reader auth.Principal, id
 	if err != nil || len(changed) == 0 {
 		return err
 	}
-	events := make([][]byte, len(changed))
-	for i, m := range changed {
-		view := messageView(m)
-		events[i] = encode("message.status", map[string]any{"messageId": m.ID, "conversationId": id, "status": view.Status, "readAt": view.ReadAt})
-	}
-	u.broadcast(ctx, id, events...)
+	// Positions are monotonic, so the latest change implies every earlier one; one event
+	// per message could overflow a session's outbox on a long backlog.
+	latest := messageView(changed[len(changed)-1])
+	u.broadcast(ctx, id, encode("message.status", map[string]any{"messageId": latest.ID, "conversationId": id, "status": latest.Status, "readAt": latest.ReadAt}))
 	return nil
 }
 

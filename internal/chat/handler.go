@@ -76,16 +76,15 @@ func (h *ChatHandler) IssueTicket(c *fiber.Ctx) error {
 func (h *ChatHandler) serve(conn *websocket.Conn) {
 	ctx := context.Background()
 	session, err := h.usecase.Connect(ctx, conn.Query("ticket"))
-	if errors.Is(err, realtime.ErrTooManySessions) {
+	switch {
+	case errors.Is(err, errs.ErrUnauthorized):
+		closeWith(conn, closeUnauthorized, "Authentication failed.")
+		return
+	case errors.Is(err, realtime.ErrTooManySessions):
 		closeWith(conn, websocket.ClosePolicyViolation, "Too many chat sessions.")
 		return
-	}
-	if err != nil {
-		code, reason := closeUnauthorized, "Authentication failed."
-		if appErr, ok := errs.IsAppError(err); !ok || appErr.Code != "UNAUTHORIZED" {
-			code, reason = websocket.CloseInternalServerErr, "An unexpected error occurred."
-		}
-		closeWith(conn, code, reason)
+	case err != nil:
+		closeWith(conn, websocket.CloseInternalServerErr, "An unexpected error occurred.")
 		return
 	}
 	written := make(chan struct{})
@@ -103,6 +102,8 @@ func (h *ChatHandler) serve(conn *websocket.Conn) {
 	extend := func(string) error { return conn.SetReadDeadline(time.Now().Add(readTimeout)) }
 	_ = extend("")
 	conn.SetPongHandler(extend)
+	// ponytail: fixed one-minute window, so a burst across a boundary can reach twice the
+	// limit; a sliding window would smooth it if clients abuse that.
 	windowStart, events := time.Now(), 0
 	for {
 		_, raw, err := conn.ReadMessage()
