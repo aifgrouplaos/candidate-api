@@ -197,13 +197,18 @@ func TestUnknownTenantResetDoesNotTouchStorage(t *testing.T) {
 func TestSetupTenCandidateTenantsAgainstPostgres(t *testing.T) {
 	db := tenantDB(t)
 	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), nil)
-	for range 2 {
-		if err := uc.SetupTenants(context.Background(), tenCandidates(), func(string) string { return "test-only-password" }); err != nil {
+	var first, second []tenant.Tenant
+	for _, manifest := range []*[]tenant.Tenant{&first, &second} {
+		*manifest = tenCandidates()
+		if err := uc.SetupTenants(context.Background(), *manifest, func(string) string { return "test-only-password" }); err != nil {
 			t.Fatal(err)
 		}
 	}
 	assertCount(t, db.Raw().Model(&auth.User{}), 20)
-	for _, candidate := range tenCandidates() {
+	for i, candidate := range second {
+		if candidate.ID != first[i].ID {
+			t.Fatalf("candidate %d moved to a new tenant on repeated setup", i+1)
+		}
 		assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ? AND role = ? AND active = ?", candidate.ID, auth.RoleAdmin, true), 1)
 		assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ? AND role = ? AND active = ?", candidate.ID, auth.RoleEmployee, true), 1)
 		assertCount(t, db.Raw().Model(&employee.Employee{}).Where("tenant_id = ?", candidate.ID), 1)

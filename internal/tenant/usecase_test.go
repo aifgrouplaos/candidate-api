@@ -7,14 +7,19 @@ import (
 	"testing"
 
 	"github.com/aifgrouplaos/candidate-api/internal/tenant"
+	"github.com/google/uuid"
 )
 
 type repository struct {
-	setup  func([]tenant.PreparedTenant) error
-	revoke func(string) error
-	clear  func(string) error
+	existing map[string]string
+	setup    func([]tenant.PreparedTenant) error
+	revoke   func(string) error
+	clear    func(string) error
 }
 
+func (r repository) TenantIDByAdminEmail(_ context.Context, email string) (string, error) {
+	return r.existing[email], nil
+}
 func (r repository) SetupTenants(_ context.Context, tenants []tenant.PreparedTenant) error {
 	return r.setup(tenants)
 }
@@ -52,7 +57,6 @@ func tenCandidates() []tenant.Tenant {
 	for i := range result {
 		n := i + 1
 		result[i] = tenant.Tenant{
-			ID:       fmt.Sprintf("10000000-0000-4000-8000-%012d", n),
 			Admin:    tenant.Account{Email: fmt.Sprintf("candidate%d.admin@example.test", n), FullName: "Candidate Admin", PasswordEnv: fmt.Sprintf("CANDIDATE_%d_ADMIN_PASSWORD", n)},
 			Employee: tenant.Account{Email: fmt.Sprintf("candidate%d.employee@example.test", n), FullName: "Candidate Employee", PasswordEnv: fmt.Sprintf("CANDIDATE_%d_EMPLOYEE_PASSWORD", n)},
 		}
@@ -77,6 +81,26 @@ func TestSetupTenCandidates(t *testing.T) {
 	}
 }
 
+func TestSetupReusesExistingAdminTenantAndGeneratesOthers(t *testing.T) {
+	const existing = "20000000-0000-4000-8000-000000000001"
+	var prepared []tenant.PreparedTenant
+	manifest := tenants()
+	repo := repository{
+		existing: map[string]string{"admin1@example.test": existing},
+		setup:    func(ts []tenant.PreparedTenant) error { prepared = ts; return nil },
+	}
+	if err := tenant.NewTenantUsecase(repo, nil).SetupTenants(context.Background(), manifest, func(string) string { return "test-only-password" }); err != nil {
+		t.Fatal(err)
+	}
+	if prepared[0].Tenant.ID != existing || manifest[0].ID != existing {
+		t.Fatalf("existing Admin tenant not reused: %q", prepared[0].Tenant.ID)
+	}
+	generated := prepared[1].Tenant.ID
+	if parsed, err := uuid.Parse(generated); err != nil || parsed.String() != generated || generated == existing || manifest[1].ID != generated {
+		t.Fatalf("new tenant ID %q is not a fresh canonical UUID", generated)
+	}
+}
+
 func TestSetupRejectsEmptyOrOversizedManifest(t *testing.T) {
 	uc := tenant.NewTenantUsecase(repository{}, nil)
 	for _, manifest := range [][]tenant.Tenant{nil, make([]tenant.Tenant, 101)} {
@@ -90,7 +114,6 @@ func TestSetupValidatesAllAccountsBeforePersistence(t *testing.T) {
 	called := false
 	uc := tenant.NewTenantUsecase(repository{setup: func([]tenant.PreparedTenant) error { called = true; return nil }}, nil)
 	for _, mutate := range []func([]tenant.Tenant){
-		func(ts []tenant.Tenant) { ts[1].ID = ts[0].ID },
 		func(ts []tenant.Tenant) { ts[1].Employee.Email = ts[0].Admin.Email },
 		func(ts []tenant.Tenant) { ts[1].Employee.PasswordEnv = "MISSING" },
 		func(ts []tenant.Tenant) { ts[0].Admin.FullName = "x" },

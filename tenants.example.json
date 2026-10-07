@@ -1,6 +1,5 @@
 [
   {
-    "id": "10000000-0000-4000-8000-000000000001",
     "admin": {
       "email": "candidate1.admin@example.test",
       "fullName": "Candidate 1 Admin",
@@ -13,7 +12,6 @@
     }
   },
   {
-    "id": "10000000-0000-4000-8000-000000000002",
     "admin": {
       "email": "candidate2.admin@example.test",
       "fullName": "Candidate 2 Admin",
@@ -26,7 +24,6 @@
     }
   },
   {
-    "id": "10000000-0000-4000-8000-000000000003",
     "admin": {
       "email": "candidate3.admin@example.test",
       "fullName": "Candidate 3 Admin",
@@ -39,7 +36,6 @@
     }
   },
   {
-    "id": "10000000-0000-4000-8000-000000000004",
     "admin": {
       "email": "candidate4.admin@example.test",
       "fullName": "Candidate 4 Admin",
@@ -52,7 +48,6 @@
     }
   },
   {
-    "id": "10000000-0000-4000-8000-000000000005",
     "admin": {
       "email": "candidate5.admin@example.test",
       "fullName": "Candidate 5 Admin",
@@ -65,7 +60,6 @@
     }
   },
   {
-    "id": "10000000-0000-4000-8000-000000000006",
     "admin": {
       "email": "candidate6.admin@example.test",
       "fullName": "Candidate 6 Admin",
@@ -78,7 +72,6 @@
     }
   },
   {
-    "id": "10000000-0000-4000-8000-000000000007",
     "admin": {
       "email": "candidate7.admin@example.test",
       "fullName": "Candidate 7 Admin",
@@ -91,7 +84,6 @@
     }
   },
   {
-    "id": "10000000-0000-4000-8000-000000000008",
     "admin": {
       "email": "candidate8.admin@example.test",
       "fullName": "Candidate 8 Admin",
@@ -104,7 +96,6 @@
     }
   },
   {
-    "id": "10000000-0000-4000-8000-000000000009",
     "admin": {
       "email": "candidate9.admin@example.test",
       "fullName": "Candidate 9 Admin",
@@ -117,7 +108,6 @@
     }
   },
   {
-    "id": "10000000-0000-4000-8000-000000000010",
     "admin": {
       "email": "candidate10.admin@example.test",
       "fullName": "Candidate 10 Admin",

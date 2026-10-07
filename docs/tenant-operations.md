@@ -14,9 +14,9 @@ the repository root with the same database and bucket settings as the API.
 2. Copy `tenants.example.json` to ignored `tenants.local.json`.
    The example contains **10 candidates = 10 isolated tenants**, each with its own
    Admin and initial Employee login (20 accounts total). Manifests accept 1–100
-   tenants. Choose a distinct canonical, nonzero UUID per candidate and globally
-   distinct emails for every account.
-   Keep these UUIDs for later reset. The manifest references password environment
+   tenants. Use globally distinct emails for every account. Tenant IDs are not part
+   of the manifest: setup generates one per new Admin and reuses the existing tenant
+   when the Admin email already exists. The manifest references password environment
    variable names; it contains no passwords. Supply each password in the ignored
    `.env`, process environment, or operator secret manager (8–72 bytes).
    Use test-only credentials separate from production and share them with each
@@ -30,6 +30,9 @@ the repository root with the same database and bucket settings as the API.
    ```sh
    go run ./cmd/api -tenant-setup tenants.local.json
    ```
+
+   It prints one `<tenant ID>  <Admin email>` line per tenant. Keep the tenant IDs
+   for later reset; rerunning setup prints the same IDs.
 
 Setup creates all manifest tenants atomically, with one active Admin and one active,
 login-enabled Employee each. Each Employee starts with code `EMP-0001`, the IT
@@ -48,7 +51,7 @@ require no additional database seed. Restart the API after successful setup.
 ## Reset and reuse
 
 Stop **every** API replica, verify the selected database/bucket and the tenant ID
-against the manifest, then run:
+printed by setup for that Admin, then run:
 
 ```sh
 go run ./cmd/api -tenant-reset 10000000-0000-4000-8000-000000000001

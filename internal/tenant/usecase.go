@@ -26,18 +26,10 @@ func (u *TenantUsecase) SetupTenants(ctx context.Context, tenants []Tenant, gete
 	if len(tenants) < 1 || len(tenants) > 100 {
 		return errs.BadRequest("provide between 1 and 100 candidate tenants")
 	}
-	ids, emails := map[string]bool{}, map[string]bool{}
+	emails := map[string]bool{}
 	passwords := make([][2]string, len(tenants))
 	for i := range tenants {
-		t := &tenants[i]
-		if err := validTenantID(t.ID); err != nil {
-			return err
-		}
-		if ids[t.ID] {
-			return errs.BadRequest("tenant IDs must be distinct")
-		}
-		ids[t.ID] = true
-		for j, a := range []*Account{&t.Admin, &t.Employee} {
+		for j, a := range []*Account{&tenants[i].Admin, &tenants[i].Employee} {
 			password, err := validateAccount(a, emails, getenv)
 			if err != nil {
 				return err
@@ -46,14 +38,26 @@ func (u *TenantUsecase) SetupTenants(ctx context.Context, tenants []Tenant, gete
 		}
 	}
 	prepared := make([]PreparedTenant, len(tenants))
-	for i, t := range tenants {
-		p, err := prepareTenant(t, passwords[i])
+	for i := range tenants {
+		id, err := u.tenantID(ctx, tenants[i].Admin.Email)
 		if err != nil {
 			return err
 		}
-		prepared[i] = p
+		tenants[i].ID = id
+		if prepared[i], err = prepareTenant(tenants[i], passwords[i]); err != nil {
+			return err
+		}
 	}
 	return u.repo.SetupTenants(ctx, prepared)
+}
+
+// tenantID reuses the existing Admin's tenant so repeated setup is stable.
+func (u *TenantUsecase) tenantID(ctx context.Context, adminEmail string) (string, error) {
+	id, err := u.repo.TenantIDByAdminEmail(ctx, adminEmail)
+	if err != nil || id != "" {
+		return id, err
+	}
+	return uuid.NewString(), nil
 }
 
 // validateAccount normalizes a, records its email in seen, and returns its password.

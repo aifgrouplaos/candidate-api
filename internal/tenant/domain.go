@@ -13,8 +13,9 @@ type Account struct {
 	PasswordEnv string `json:"passwordEnv"`
 }
 
+// Tenant.ID is not read from the manifest; setup reuses the Admin's tenant or generates one.
 type Tenant struct {
-	ID       string  `json:"id"`
+	ID       string  `json:"-"`
 	Admin    Account `json:"admin"`
 	Employee Account `json:"employee"`
 }
@@ -28,6 +29,8 @@ type PreparedTenant struct {
 }
 
 type TenantRepository interface {
+	// TenantIDByAdminEmail returns the tenant of the Admin with email, or "" if none exists.
+	TenantIDByAdminEmail(ctx context.Context, email string) (string, error)
 	// SetupTenants atomically creates missing accounts and initial conversations.
 	// Existing accounts must match; their passwords are unchanged.
 	SetupTenants(context.Context, []PreparedTenant) error

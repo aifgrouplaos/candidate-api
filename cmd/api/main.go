@@ -184,6 +184,9 @@ func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantI
 	if err := uc.SetupTenants(ctx, tenants, os.Getenv); err != nil {
 		return err
 	}
+	for _, t := range tenants {
+		fmt.Printf("%s  %s\n", t.ID, t.Admin.Email)
+	}
 	fmt.Printf("Set up %d candidate tenants; existing account credentials unchanged.\n", len(tenants))
 	return nil
 }

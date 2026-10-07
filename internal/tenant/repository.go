@@ -19,6 +19,15 @@ func NewTenantRepository(db contract.ORM) TenantRepository {
 	return &tenantRepository{db: db}
 }
 
+func (r *tenantRepository) TenantIDByAdminEmail(ctx context.Context, email string) (string, error) {
+	var admin auth.User
+	err := r.db.Session(ctx).Where("LOWER(email) = ? AND role = ?", email, auth.RoleAdmin).First(&admin).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", nil
+	}
+	return admin.TenantID, err
+}
+
 func (r *tenantRepository) SetupTenants(ctx context.Context, tenants []PreparedTenant) error {
 	return r.db.Transaction(ctx, func(tx *gorm.DB) error {
 		for _, t := range tenants {
