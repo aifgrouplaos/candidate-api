@@ -204,6 +204,12 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 		if err := authRepo.CreateSession(ctx, session, &auth.RefreshToken{TokenHash: "h1", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
+		if id, err := authRepo.EmployeeID(ctx, *first.UserID, tenantA); err != nil || id == nil || *id != first.ID {
+			t.Fatalf("employee id = %v, err %v", id, err)
+		}
+		if id, err := authRepo.EmployeeID(ctx, *first.UserID, tenantB); err != nil || id != nil {
+			t.Fatalf("cross-tenant employee id = %v, err %v", id, err)
+		}
 		if err := repo.Delete(ctx, tenantB, first.ID, time.Now()); errorCode(err) != "NOT_FOUND" {
 			t.Fatalf("cross-tenant delete: %v", err)
 		}
@@ -215,6 +221,9 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 		}
 		if active, err := authRepo.SessionActive(ctx, session.ID, session.UserID, tenantA); err != nil || active {
 			t.Fatalf("session still active: %v %v", active, err)
+		}
+		if id, err := authRepo.EmployeeID(ctx, *first.UserID, tenantA); err != nil || id != nil {
+			t.Fatalf("deleted employee id = %v, err %v", id, err)
 		}
 		if _, err := authRepo.FindActiveUserByEmail(ctx, "somchai@example.test"); errorCode(err) != "UNAUTHORIZED" {
 			t.Fatalf("deleted employee can still log in: %v", err)

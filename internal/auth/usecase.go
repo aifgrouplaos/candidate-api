@@ -34,9 +34,12 @@ type RefreshInput struct {
 }
 
 type AuthenticatedUser struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-	Role  Role   `json:"role"`
+	ID         string  `json:"id"`
+	TenantID   string  `json:"tenantId"`
+	Email      string  `json:"email"`
+	Role       Role    `json:"role"`
+	FullName   string  `json:"fullName"`
+	EmployeeID *string `json:"employeeId"`
 }
 
 type Session struct {
@@ -44,13 +47,14 @@ type Session struct {
 	RefreshToken string             `json:"refreshToken"`
 	TokenType    string             `json:"tokenType"`
 	ExpiresIn    int                `json:"expiresIn"`
-	User         *AuthenticatedUser `json:"user,omitempty"`
+	User         *AuthenticatedUser `json:"user"`
 }
 
 type AuthUsecase interface {
 	Login(ctx context.Context, input Credentials) (*Session, error)
 	Refresh(ctx context.Context, input RefreshInput) (*Session, error)
 	Logout(ctx context.Context, userID, sessionID string, input RefreshInput) error
+	Me(ctx context.Context, userID, tenantID string) (*AuthenticatedUser, error)
 }
 
 type authUsecase struct {
@@ -99,7 +103,7 @@ func (u *authUsecase) Refresh(ctx context.Context, input RefreshInput) (*Session
 	if err != nil {
 		return nil, errs.Internal(msgIssueSession)
 	}
-	session, err := u.session(user, old.SessionID, raw, false)
+	session, err := u.session(ctx, user, old.SessionID, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +130,7 @@ func (u *authUsecase) newSession(ctx context.Context, user *User) (*Session, err
 		return nil, errs.Internal(msgIssueSession)
 	}
 	sessionID := uuid.NewString()
-	session, err := u.session(user, sessionID, raw, true)
+	session, err := u.session(ctx, user, sessionID, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +143,26 @@ func (u *authUsecase) newSession(ctx context.Context, user *User) (*Session, err
 	return session, nil
 }
 
-func (u *authUsecase) session(user *User, sessionID, refreshToken string, includeUser bool) (*Session, error) {
+func (u *authUsecase) Me(ctx context.Context, userID, tenantID string) (*AuthenticatedUser, error) {
+	user, err := u.repo.FindActiveUser(ctx, userID, tenantID)
+	if err != nil {
+		return nil, normalizeAuthError(err)
+	}
+	return u.authenticatedUser(ctx, user)
+}
+
+func (u *authUsecase) authenticatedUser(ctx context.Context, user *User) (*AuthenticatedUser, error) {
+	employeeID, err := u.repo.EmployeeID(ctx, user.ID, user.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	return &AuthenticatedUser{
+		ID: user.ID, TenantID: user.TenantID, Email: user.Email,
+		Role: user.Role, FullName: user.FullName, EmployeeID: employeeID,
+	}, nil
+}
+
+func (u *authUsecase) session(ctx context.Context, user *User, sessionID, refreshToken string) (*Session, error) {
 	if !user.Role.Valid() || user.ID == "" || user.TenantID == "" {
 		return nil, errs.Internal("account is not configured for authentication")
 	}
@@ -149,14 +172,14 @@ func (u *authUsecase) session(user *User, sessionID, refreshToken string, includ
 	if err != nil {
 		return nil, errs.Internal(msgIssueSession)
 	}
-	session := &Session{
+	authenticated, err := u.authenticatedUser(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{
 		AccessToken: accessToken, RefreshToken: refreshToken,
-		TokenType: "Bearer", ExpiresIn: int(accessTokenTTL.Seconds()),
-	}
-	if includeUser {
-		session.User = &AuthenticatedUser{ID: user.ID, Email: user.Email, Role: user.Role}
-	}
-	return session, nil
+		TokenType: "Bearer", ExpiresIn: int(accessTokenTTL.Seconds()), User: authenticated,
+	}, nil
 }
 
 func normalizeAuthError(err error) error {

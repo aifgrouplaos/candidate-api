@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,7 +22,22 @@ func NewAuthHandler(usecase AuthUsecase) *AuthHandler { return &AuthHandler{usec
 func (h *AuthHandler) RegisterRoutes(router fiber.Router, loginLimit, refreshLimit fiber.Handler, protected ...fiber.Handler) {
 	router.Post("/auth/login", loginLimit, h.Login)
 	router.Post("/auth/refresh", refreshLimit, h.Refresh)
+	// Clip so each append below copies; a shared backing array would swap route handlers.
+	protected = slices.Clip(protected)
 	router.Post("/auth/logout", append(protected, h.Logout)...)
+	router.Get("/auth/me", append(protected, h.Me)...)
+}
+
+func (h *AuthHandler) Me(c *fiber.Ctx) error {
+	principal, ok := PrincipalFrom(c)
+	if !ok {
+		return errs.ErrUnauthorized
+	}
+	result, err := h.usecase.Me(c.UserContext(), principal.UserID, principal.TenantID)
+	if err != nil {
+		return err
+	}
+	return httpresponse.Success(c, result)
 }
 
 func (h *AuthHandler) Login(c *fiber.Ctx) error {

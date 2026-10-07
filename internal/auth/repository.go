@@ -26,6 +26,26 @@ func (r *authRepository) FindActiveUserByEmail(ctx context.Context, email string
 	return &user, err
 }
 
+func (r *authRepository) FindActiveUser(ctx context.Context, userID, tenantID string) (*User, error) {
+	var user User
+	err := r.db.Session(ctx).Where("id = ? AND tenant_id = ? AND active = ?", userID, tenantID, true).First(&user).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errs.ErrUnauthorized
+	}
+	return &user, err
+}
+
+func (r *authRepository) EmployeeID(ctx context.Context, userID, tenantID string) (*string, error) {
+	var ids []string
+	err := r.db.Session(ctx).Table("employees").
+		Where("user_id = ? AND tenant_id = ? AND deleted_at IS NULL", userID, tenantID).
+		Limit(1).Pluck("id", &ids).Error
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	return &ids[0], nil
+}
+
 func (r *authRepository) CreateSession(ctx context.Context, session *AuthSession, token *RefreshToken) error {
 	return r.db.Transaction(ctx, func(tx *gorm.DB) error {
 		token.UserID = session.UserID

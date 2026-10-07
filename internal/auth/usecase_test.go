@@ -14,9 +14,24 @@ import (
 )
 
 type memoryAuthRepository struct {
-	user     *User
-	tokens   map[string]*RefreshToken
-	sessions map[string]*AuthSession
+	user       *User
+	employeeID *string
+	tokens     map[string]*RefreshToken
+	sessions   map[string]*AuthSession
+}
+
+func (r *memoryAuthRepository) FindActiveUser(_ context.Context, userID, tenantID string) (*User, error) {
+	if r.user == nil || !r.user.Active || r.user.ID != userID || r.user.TenantID != tenantID {
+		return nil, errs.ErrUnauthorized
+	}
+	return r.user, nil
+}
+
+func (r *memoryAuthRepository) EmployeeID(_ context.Context, userID, tenantID string) (*string, error) {
+	if r.user == nil || r.user.ID != userID || r.user.TenantID != tenantID {
+		return nil, nil
+	}
+	return r.employeeID, nil
 }
 
 func (r *memoryAuthRepository) FindActiveUserByEmail(_ context.Context, email string) (*User, error) {
@@ -115,8 +130,8 @@ func TestLoginRotateAndLogout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if refreshed.User != nil {
-		t.Fatal("refresh response unexpectedly included the login user")
+	if refreshed.User == nil || refreshed.User.ID != "user-1" || refreshed.User.EmployeeID != nil {
+		t.Fatalf("refresh user = %+v, want the admin with no employeeId", refreshed.User)
 	}
 	if repo.tokens[oldHash].RevokedAt == nil {
 		t.Fatal("old refresh token was not revoked")
