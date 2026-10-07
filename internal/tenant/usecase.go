@@ -38,44 +38,63 @@ func (u *TenantUsecase) SetupTenants(ctx context.Context, tenants []Tenant, gete
 		}
 		ids[t.ID] = true
 		for j, a := range []*Account{&t.Admin, &t.Employee} {
-			a.Email = strings.ToLower(strings.TrimSpace(a.Email))
-			a.FullName = strings.TrimSpace(a.FullName)
-			parsed, err := mail.ParseAddress(a.Email)
-			if err != nil || parsed.Address != a.Email || len(a.Email) > 254 || emails[a.Email] {
-				return errs.BadRequest("provide distinct valid emails for every account")
+			password, err := validateAccount(a, emails, getenv)
+			if err != nil {
+				return err
 			}
-			emails[a.Email] = true
-			if n := len([]rune(a.FullName)); n < 2 || n > 100 {
-				return errs.BadRequest("names must contain 2–100 characters")
-			}
-			if a.PasswordEnv == "" {
-				return errs.BadRequest("passwordEnv is required")
-			}
-			passwords[i][j] = getenv(a.PasswordEnv)
-			if n := len(passwords[i][j]); n < 8 || n > 72 {
-				return errs.BadRequest("password environment values must contain 8–72 bytes")
-			}
+			passwords[i][j] = password
 		}
 	}
 	prepared := make([]PreparedTenant, len(tenants))
 	for i, t := range tenants {
-		a, err := bcrypt.GenerateFromPassword([]byte(passwords[i][0]), bcrypt.DefaultCost)
+		p, err := prepareTenant(t, passwords[i])
 		if err != nil {
-			return fmt.Errorf("hash Admin password: %w", err)
+			return err
 		}
-		e, err := bcrypt.GenerateFromPassword([]byte(passwords[i][1]), bcrypt.DefaultCost)
-		if err != nil {
-			return fmt.Errorf("hash Employee password: %w", err)
-		}
-		prepared[i] = PreparedTenant{
-			Tenant: t, AdminHash: string(a), EmployeeHash: string(e), DepartmentName: "IT",
-			EmployeeProfile: employee.Employee{
-				TenantID: t.ID, EmployeeCode: "EMP-0001", FullName: t.Employee.FullName,
-				Email: t.Employee.Email, Status: employee.StatusActive, Version: 1,
-			},
-		}
+		prepared[i] = p
 	}
 	return u.repo.SetupTenants(ctx, prepared)
+}
+
+// validateAccount normalizes a, records its email in seen, and returns its password.
+func validateAccount(a *Account, seen map[string]bool, getenv func(string) string) (string, error) {
+	a.Email = strings.ToLower(strings.TrimSpace(a.Email))
+	a.FullName = strings.TrimSpace(a.FullName)
+	parsed, err := mail.ParseAddress(a.Email)
+	if err != nil || parsed.Address != a.Email || len(a.Email) > 254 || seen[a.Email] {
+		return "", errs.BadRequest("provide distinct valid emails for every account")
+	}
+	seen[a.Email] = true
+	if n := len([]rune(a.FullName)); n < 2 || n > 100 {
+		return "", errs.BadRequest("names must contain 2–100 characters")
+	}
+	if a.PasswordEnv == "" {
+		return "", errs.BadRequest("passwordEnv is required")
+	}
+	password := getenv(a.PasswordEnv)
+	if n := len(password); n < 8 || n > 72 {
+		return "", errs.BadRequest("password environment values must contain 8–72 bytes")
+	}
+	return password, nil
+}
+
+// prepareTenant hashes the Admin and Employee passwords and builds the initial Employee.
+func prepareTenant(t Tenant, passwords [2]string) (PreparedTenant, error) {
+	a, err := bcrypt.GenerateFromPassword([]byte(passwords[0]), bcrypt.DefaultCost)
+	if err != nil {
+		return PreparedTenant{}, fmt.Errorf("hash Admin password: %w", err)
+	}
+	e, err := bcrypt.GenerateFromPassword([]byte(passwords[1]), bcrypt.DefaultCost)
+	if err != nil {
+		return PreparedTenant{}, fmt.Errorf("hash Employee password: %w", err)
+	}
+	return PreparedTenant{
+		Tenant: t, AdminHash: string(a), EmployeeHash: string(e), DepartmentName: "IT",
+		EmployeeProfile: employee.Employee{
+			TenantID: t.ID, EmployeeCode: "EMP-0001", FullName: t.Employee.FullName,
+			Email: t.Employee.Email, Status: employee.StatusActive, Version: 1,
+		},
+	}, nil
 }
 
 // Reset requires stopped API replicas. Revocation commits before storage cleanup,
