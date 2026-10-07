@@ -292,7 +292,7 @@ func (u *employeeUsecase) UploadAvatar(ctx context.Context, actor auth.Principal
 	if !ok {
 		return nil, avatarInvalid(msgAvatarType)
 	}
-	key := fmt.Sprintf("avatars/%s/%s/%s%s", employee.TenantID, employee.ID, uuid.NewString(), ext)
+	key := fmt.Sprintf("files/avatars/%s/%s/%s%s", employee.TenantID, employee.ID, uuid.NewString(), ext)
 	if _, err := u.files.Upload(ctx, u.bucket, key, bytes.NewReader(data), int64(len(data)), contentType); err != nil {
 		slog.Error("avatar upload failed", "error", err, "requestId", requestID(ctx))
 		return nil, errs.Internal("could not store the avatar")
@@ -507,7 +507,7 @@ func avatarObjectKey(tenantID string, value *string) (string, bool) {
 		return "", false
 	}
 	key := *value
-	if !strings.HasPrefix(key, "avatars/"+tenantID+"/") || strings.Contains(key, "..") || strings.Contains(key, `\`) {
+	if !strings.HasPrefix(key, "files/avatars/"+tenantID+"/") || strings.Contains(key, "..") || strings.Contains(key, `\`) {
 		return "", false
 	}
 	return key, true

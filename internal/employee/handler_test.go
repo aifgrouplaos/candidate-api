@@ -130,7 +130,7 @@ func TestUploadAvatarRoute(t *testing.T) {
 		t.Fatalf("anonymous = %d", status)
 	}
 	status, body := send(bearer(employeeA), "image/jpeg", imageBytes(16, jpegMagic))
-	if status != http.StatusOK || !strings.Contains(string(body["data"]), `"avatarUrl":"https://files.example.test/`) || strings.Contains(string(body["data"]), `"avatarUrl":"avatars/`) {
+	if status != http.StatusOK || !strings.Contains(string(body["data"]), `"avatarUrl":"https://files.example.test/`) || strings.Contains(string(body["data"]), `"avatarUrl":"files/avatars/`) {
 		t.Fatalf("upload = %d %s", status, body["data"])
 	}
 	if status, body = send(bearer(employeeA), "image/gif", []byte("GIF89a")); status != http.StatusUnprocessableEntity || !strings.Contains(string(body["error"]), `"file"`) {
