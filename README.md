@@ -4,20 +4,40 @@ Backend API for AIF Group Laos's Frontend Engineer take-home assessment. Candida
 
 ## Current status
 
-The repository contains the assessment materials and an initialized Go API scaffold. The assessment endpoints and deployment setup are still to be implemented. The features below describe the planned scope.
+The A1, A2, and A3 endpoints, chat WebSocket, candidate tenant setup/reset, and API docs are implemented. Deployment (ingress, hostname, TLS) is owned by the API owner.
 
 ## Run locally
 
-Requires Go 1.22+ and Docker Compose. The scaffold uses Fiber and PostgreSQL; PostgreSQL is enabled by default. Redis is required when authentication routes are enabled, except an explicit `APP_ENV=development`, which skips rate limits. JWT remains optional for local development. Avatar upload uses a private RustFS bucket: `docker compose up -d rustfs` and `MINIO_ENABLED=true` point the storage adapter at its S3 API.
+Requires Go 1.22+ and Docker Compose. The API uses Fiber, PostgreSQL, Redis-backed rate limits, JWT, and a private RustFS bucket for avatars.
 
 ```sh
 cp .env.example .env
-docker compose up -d postgres redis
-go mod tidy
-go run cmd/api/main.go
+docker compose up -d postgres redis rustfs
 ```
 
-The API listens on `http://localhost:8080`. Check `GET /health` for the scaffold health response. Open `GET /docs` for Swagger UI over the REST contract in `pkg/apidocs/openapi.yaml` (raw file at `GET /openapi.yaml`); use **Authorize** with the `accessToken` from `/auth/login`. `.env.example` documents the app and adapter settings. Set `JWT_ENABLED=true` and a `JWT_SECRET` of at least 32 bytes when enabling JWT-protected routes. Production also requires Redis, private object storage (`MINIO_ENABLED=true`), and explicit `TRUSTED_PROXIES` IPs/CIDRs for ingress client-IP rate limits. `ALLOWED_ORIGINS` overrides the default browser origins (`http://localhost:3000`, `http://localhost:5173`).
+In `.env`, set `JWT_ENABLED=true`, a `JWT_SECRET` of at least 32 bytes, `MINIO_ENABLED=true`, and the `CANDIDATE_*_PASSWORD` values for your manifest. `.env.example` already points at the Compose ports (PostgreSQL on `5435`). An explicit `APP_ENV=development` skips rate limits, so Redis is optional then. Create candidate tenants, then start the API:
+
+```sh
+cp tenants.example.json tenants.local.json   # optional: trim to the tenants you need
+make tenant-setup
+make run
+```
+
+The API listens on `http://localhost:8080` (`GET /health`). Sign in with a manifest account at `POST /api/v1/auth/login`.
+
+- `GET /docs` serves Swagger UI over the REST contract (`pkg/apidocs/openapi.yaml`, raw at `GET /openapi.yaml`); use **Authorize** with the `accessToken`. Its description documents the chat WebSocket connection, every event payload, and close codes.
+- `tools/chat-ui/index.html` is a manual two-browser chat client for the same API.
+- `ALLOWED_ORIGINS` overrides the default browser origins (`http://localhost:3000`, `http://localhost:5173`) for both CORS and WebSocket.
+- Production also requires Redis, private object storage, and explicit `TRUSTED_PROXIES` IPs/CIDRs for ingress client-IP rate limits.
+
+## Verify
+
+```sh
+make test   # unit tests; set TEST_POSTGRES_DSN to include repository tests
+make e2e    # stop `make run` first
+```
+
+`make e2e` builds and starts the API on `APP_PORT`, runs setup, and drives the documented flows for the first two `MANIFEST` tenants against it. Those flows are login, `/auth/me`, Employee create/search/update with version conflicts, avatar upload and presigned download, Project create with idempotent retry, and chat over REST and WebSocket. It checks that neither tenant can read or change the other's records, stops the API, resets the first tenant, runs setup again, and confirms only that tenant was cleared. It deletes tenant data, so it refuses to run unless `APP_ENV=development` and `DB_HOST` and `MINIO_ENDPOINT` are local. Use `ENV_FILE=<file>` and `MANIFEST=<file>` to point it at a dedicated local env and manifest.
 
 ## Create a candidate Admin
 

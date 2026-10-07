@@ -2,9 +2,60 @@ openapi: 3.1.0
 info:
   title: Candidate Take-Home API
   version: 1.0.0
-  description: >-
-    REST contract for assessment exercises A1, A2, and A3. WebSocket events are
-    specified in API_SPEC.md. Tenant identity always comes from authentication.
+  description: |
+    REST contract for assessment exercises A1, A2, and A3. Tenant identity always
+    comes from authentication. Send `Authorization: Bearer <accessToken>` from
+    `/auth/login`. Browsers may call the API from the configured origins (default
+    `http://localhost:3000` and `http://localhost:5173`).
+
+    ## Chat WebSocket
+
+    1. `POST /api/v1/chat/ws-ticket` with the bearer token returns
+       `{ "data": { "ticket", "expiresIn" } }`. The ticket works once, within `expiresIn` seconds.
+    2. Open `ws://<host>/ws/chat?ticket=<ticket>` (`wss://` over HTTPS). Never put an
+       access token in the URL. Browsers must connect from an allowed origin.
+    3. After every (re)connect, fetch `GET /chat/conversations/{id}/messages?after=<last contiguous message ID>`
+       before relying on live events. Get a new ticket for each connection.
+
+    The server sends a WebSocket ping frame about every 25 seconds; browsers answer it
+    automatically. A connection that sends nothing (pong included) for 50 seconds is closed.
+    Each client frame is at most 4096 bytes, each connection may send 120 events per
+    minute, and each user may hold 10 sessions.
+
+    Every event, in both directions, is one JSON text frame:
+    `{ "type": "<event>", "data": { ... }, "ts": "<UTC timestamp>" }`. Clients may omit `ts`.
+
+    ### Client → server
+
+    | type | data | effect |
+    | --- | --- | --- |
+    | `message.delivered` | `{ "conversationId", "lastContiguousMessageId" }` | Confirms receipt through that message, advancing the delivery position shared by the caller's sessions; both participants get `message.status`. |
+    | `message.read` | `{ "conversationId", "lastReadMessageId" }` | Marks messages read through that message; same as `POST /chat/conversations/{id}/read`. |
+    | `typing` | `{ "conversationId", "isTyping" }` | Relays typing state to the other participant; not stored. |
+    | `ping` | `{}` | Optional heartbeat; no reply. |
+
+    ### Server → client
+
+    | type | data | when |
+    | --- | --- | --- |
+    | `message.new` | `Message` (as returned by `POST /chat/conversations/{id}/messages`) | A message is saved; sent to every session of both participants. |
+    | `message.status` | `{ "messageId", "conversationId", "status", "readAt" }` | Messages become `delivered` or `read`, through `messageId`. |
+    | `conversation.updated` | `Conversation` | Inbox preview or unread count changed. |
+    | `unread.updated` | `{ "total" }` | The caller's aggregate unread count changed. |
+    | `typing` | `{ "conversationId", "userId", "isTyping" }` | The other participant's typing state. |
+    | `presence` | `{ "userId", "online", "lastSeenAt" }` | A counterpart's first session opened or last session closed; also sent on connect for each online counterpart. |
+    | `error` | `{ "code", "message" }` | A client event was rejected, using the REST error codes (for example `BAD_REQUEST`, `VALIDATION_ERROR`, `NOT_FOUND`). The connection stays open. |
+
+    ### Close codes
+
+    | code | meaning | client action |
+    | --- | --- | --- |
+    | `4401` | Ticket invalid, expired, or reused; origin not allowed; or the authenticated session ended. | Refresh tokens or sign in, then get a new ticket. |
+    | `1008` | Too many sessions for the user, or the event rate limit was exceeded. | Close other tabs or slow down, then reconnect. |
+    | `1011` | Unexpected server error. | Reconnect with backoff. |
+    | `1013` | The server dropped the session, for example a slow reader. | Reconnect and resync with `after`. |
+    | `1009` | A client frame exceeded 4096 bytes. | Send smaller events, then reconnect. |
+    | `1006` | No close frame: the network dropped, or the connection was idle for 50 seconds. | Reconnect with backoff and resync with `after`. |
 servers:
   - url: /api/v1
 security:

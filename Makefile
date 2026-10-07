@@ -1,6 +1,7 @@
-.PHONY: run build docker-up docker-down db-clear tenant-setup tenant-reset test tidy
+.PHONY: run build docker-up docker-down db-clear tenant-setup tenant-reset e2e test tidy
 
 MANIFEST ?= tenants.local.json
+ENV_FILE ?= .env
 
 run:
 	go run cmd/api/main.go
@@ -35,6 +36,13 @@ tenant-setup:
 tenant-reset:
 	@[ -n "$(TENANT)" ] || { echo "Usage: make tenant-reset TENANT=<tenant UUID>"; exit 1; }
 	@set -a; . ./.env; set +a; go run ./cmd/api -tenant-reset "$(TENANT)"
+
+# Local only, destructive: builds and starts the API on APP_PORT, runs every candidate flow
+# for the first two MANIFEST tenants, then resets the first. Stop `make run` first.
+# Usage: make e2e [ENV_FILE=.env] [MANIFEST=tenants.local.json]
+e2e:
+	@set -a; . "$(abspath $(ENV_FILE))"; set +a; \
+	E2E=1 E2E_MANIFEST="$(abspath $(MANIFEST))" go test ./cmd/api -run TestE2E -count=1 -v
 
 test:
 	go test ./...

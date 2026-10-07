@@ -104,22 +104,15 @@ one tenant twice, and verify that the other tenant and shared departments remain
 They also cover invalid/unknown tenants, conflicting emails and cleanup failure.
 Without `TEST_POSTGRES_DSN`, the database tests skip.
 
-For storage and candidate login verification in a disposable test environment:
-
-1. Run tenant setup twice; log in as every configured account. Verify five departments,
-   task types and priorities, and each Employee's initial conversation.
-2. Upload an avatar in each tenant, send a chat message, and create a Project with a
-   Phase and Task in each tenant. Keep both tenants' tokens and Project IDs.
-   Optionally put an orphan object under `files/avatars/<first tenant UUID>/` using the
-   operator's S3 client; reset must remove it too.
-3. Stop all replicas. Reset the first tenant twice. With an S3 client, verify its
-   avatar prefix is empty while the second tenant's objects remain unchanged.
-4. Restart the API. The first tenant's old access/refresh tokens must return `401`,
-   including its Admin tokens. Its retained Admin can log in again and sees empty
-   Employee, conversation and Project lists. Its former Employee cannot log in.
-   The second tenant's existing tokens and data must still work.
-5. Stop replicas, run setup again, then restart. The first tenant's initial Employee
-   can log in and has one empty conversation, while the second tenant is unchanged.
+For storage, candidate login, and reset verification against a running API, stop
+`make run` and run `make e2e` against a local stack. It sets up the manifest
+tenants, starts the API, and exercises the first two tenants' Admin, initial
+Employee, a created Employee, avatar, chat, and Project flows. It also checks that
+neither tenant can reach the other's records. Then it stops the API, resets the
+first tenant, sets it up again, and restarts the API. Old tokens and the created
+Employee must return `401`, and that tenant's avatar objects must be gone. Only the initial Employee and an empty conversation may
+remain, and the second tenant's tokens and data must still work. See the README
+for its environment guard.
 
 No reset route is registered. Operator access is controlled by infrastructure
 credentials and shell access, rather than candidate API authorization.

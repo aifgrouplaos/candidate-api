@@ -10,6 +10,7 @@ import (
 
 	"github.com/BounkhongDev/bkgo/config"
 	"github.com/BounkhongDev/bkgo/contract"
+	"github.com/gofiber/fiber/v2"
 	"gorm.io/gorm"
 )
 
@@ -37,55 +38,43 @@ func TestDevelopmentRegistersAuthRoutesWithoutLimiter(t *testing.T) {
 	t.Setenv("APP_ENV", "development")
 	cfg := &config.Config{App: config.App{Env: "development"}, PostgresEnabled: true, JWTEnabled: true}
 	app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{}, nil)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
+	if got := postMalformedJSON(t, app, "/api/v1/auth/login"); got != http.StatusBadRequest {
+		t.Fatalf("development without a limiter: got %d, want %d", got, http.StatusBadRequest)
+	}
+
+	cfg.App.Env = "staging"
+	app = newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{}, nil)
+	if got := postMalformedJSON(t, app, "/api/v1/auth/login"); got != http.StatusNotFound {
+		t.Fatalf("staging without a limiter: got %d, want %d", got, http.StatusNotFound)
+	}
+}
+
+func TestDevelopmentDoesNotRateLimitAuthRoutes(t *testing.T) {
+	for env, want := range map[string]int{"development": http.StatusBadRequest, "production": http.StatusTooManyRequests} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv("APP_ENV", env)
+			cfg := &config.Config{App: config.App{Env: env}, PostgresEnabled: true, JWTEnabled: true}
+			app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{}, nil)
+			for _, path := range []string{"/api/v1/auth/login", "/api/v1/auth/refresh"} {
+				if got := postMalformedJSON(t, app, path); got != want {
+					t.Fatalf("%s %s: got %d, want %d", env, path, got, want)
+				}
+			}
+		})
+	}
+}
+
+// postMalformedJSON returns the status for a POST with an unparseable JSON body.
+func postMalformedJSON(t *testing.T, app *fiber.App, path string) int {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{"))
 	req.Header.Set("Content-Type", "application/json")
 	res, err := app.Test(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if res.StatusCode != http.StatusBadRequest {
-		t.Fatalf("development without a limiter: got %d, want %d", res.StatusCode, http.StatusBadRequest)
-	}
-
-	cfg.App.Env = "staging"
-	app = newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, nil, stubToken{}, nil)
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
-	req.Header.Set("Content-Type", "application/json")
-	res, err = app.Test(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != http.StatusNotFound {
-		t.Fatalf("staging without a limiter: got %d, want %d", res.StatusCode, http.StatusNotFound)
-	}
-}
-
-func TestDevelopmentDoesNotRateLimitAuthRoutes(t *testing.T) {
-	for _, env := range []string{"development", "production"} {
-		t.Run(env, func(t *testing.T) {
-			t.Setenv("APP_ENV", env)
-			cfg := &config.Config{App: config.App{Env: env}, PostgresEnabled: true, JWTEnabled: true}
-			app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{}, nil)
-			for _, path := range []string{"/api/v1/auth/login", "/api/v1/auth/refresh"} {
-				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{"))
-				req.Header.Set("Content-Type", "application/json")
-				res, err := app.Test(req)
-				if err != nil {
-					t.Fatal(err)
-				}
-				res.Body.Close()
-				want := http.StatusBadRequest
-				if env != "development" {
-					want = http.StatusTooManyRequests
-				}
-				if res.StatusCode != want {
-					t.Fatalf("%s %s: got %d, want %d", env, path, res.StatusCode, want)
-				}
-			}
-		})
-	}
+	return res.StatusCode
 }
 
 func TestUnsetAppEnvKeepsRateLimits(t *testing.T) {
@@ -100,15 +89,8 @@ func TestUnsetAppEnvKeepsRateLimits(t *testing.T) {
 		t.Fatal("blank APP_ENV was treated as development and allowed to start without Redis")
 	}
 	app := newApp(cfg, nil, defaultAllowedOrigins, stubORM{}, rejectStore{}, stubToken{}, nil)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
-	req.Header.Set("Content-Type", "application/json")
-	res, err := app.Test(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("blank APP_ENV login: got %d, want %d", res.StatusCode, http.StatusTooManyRequests)
+	if got := postMalformedJSON(t, app, "/api/v1/auth/login"); got != http.StatusTooManyRequests {
+		t.Fatalf("blank APP_ENV login: got %d, want %d", got, http.StatusTooManyRequests)
 	}
 }
 
@@ -150,6 +132,37 @@ func TestProductionRequiresObjectStorage(t *testing.T) {
 	cfg.MinIOEnabled = true
 	if err := validateConfig(cfg, []string{"10.0.0.1"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCORSPreflightAllowsOnlyConfiguredOrigins(t *testing.T) {
+	app := newApp(&config.Config{}, nil, defaultAllowedOrigins, nil, nil, nil, nil)
+	for origin, allowed := range map[string]bool{
+		"http://localhost:3000": true,
+		"http://localhost:5173": true,
+		"https://evil.example":  false,
+	} {
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/projects", nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		req.Header.Set("Access-Control-Request-Headers", "authorization,content-type,idempotency-key")
+		res, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if got := res.Header.Get("Access-Control-Allow-Origin"); (got == origin) != allowed {
+			t.Errorf("%s: Access-Control-Allow-Origin = %q, allowed = %v", origin, got, allowed)
+		}
+		if !allowed {
+			continue
+		}
+		headers := strings.ToLower(res.Header.Get("Access-Control-Allow-Headers"))
+		for _, h := range []string{"authorization", "content-type", "idempotency-key"} {
+			if !strings.Contains(headers, h) {
+				t.Errorf("%s: Access-Control-Allow-Headers %q lacks %s", origin, headers, h)
+			}
+		}
 	}
 }
 
