@@ -11,7 +11,9 @@ import (
 	"github.com/BounkhongDev/bkgo/config"
 )
 
-func TestCreateSessionPrunesDeadRowsAfterRetention(t *testing.T) {
+// newTestDB needs TEST_POSTGRES_DSN; see internal/employee/repository_test.go.
+func newTestDB(t *testing.T) *gormadapter.DB {
+	t.Helper()
 	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
 		t.Skip("TEST_POSTGRES_DSN is not set")
@@ -36,7 +38,18 @@ func TestCreateSessionPrunesDeadRowsAfterRetention(t *testing.T) {
 	if err := db.Raw().AutoMigrate(&AuthSession{}, &RefreshToken{}); err != nil {
 		t.Fatal(err)
 	}
+	return db
+}
 
+func mustCreate(t *testing.T, db *gormadapter.DB, row any) {
+	t.Helper()
+	if err := db.Raw().Create(row).Error; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateSessionPrunesDeadRowsAfterRetention(t *testing.T) {
+	db := newTestDB(t)
 	const user, other, tenant = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"
 	now := time.Now().UTC()
 	old, recent, live := now.Add(-8*24*time.Hour), now.Add(-time.Hour), now.Add(time.Hour)
@@ -53,14 +66,10 @@ func TestCreateSessionPrunesDeadRowsAfterRetention(t *testing.T) {
 		{id: "00000000-0000-4000-8000-000000000005", user: other, revokedAt: &old, tokens: []RefreshToken{{RevokedAt: &old, ExpiresAt: live}}, kept: true},
 	}
 	for i, s := range sessions {
-		if err := db.Raw().Create(&AuthSession{ID: s.id, UserID: s.user, TenantID: tenant, RevokedAt: s.revokedAt}).Error; err != nil {
-			t.Fatal(err)
-		}
+		mustCreate(t, db, &AuthSession{ID: s.id, UserID: s.user, TenantID: tenant, RevokedAt: s.revokedAt})
 		for j, token := range s.tokens {
 			token.UserID, token.SessionID, token.TokenHash = s.user, s.id, fmt.Sprintf("hash-%d-%d", i, j)
-			if err := db.Raw().Create(&token).Error; err != nil {
-				t.Fatal(err)
-			}
+			mustCreate(t, db, &token)
 		}
 	}
 
