@@ -127,6 +127,64 @@ func TestLoginAccessTokenAuthenticatesLogout(t *testing.T) {
 	}
 }
 
+func TestMeReturnsTheCallersEmployeeID(t *testing.T) {
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte("password-123"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	employeeID := "employee-1"
+	repo := &memoryAuthRepository{
+		user:       &User{ID: "user-2", TenantID: "tenant-1", Email: "somchai@example.test", FullName: "Somchai", PasswordHash: string(passwordHash), Role: RoleEmployee, Active: true},
+		employeeID: &employeeID,
+		tokens:     make(map[string]*RefreshToken), sessions: make(map[string]*AuthSession),
+	}
+	token := jwt.New(config.JWT{Secret: "test-secret"})
+	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})
+	pass := func(c *fiber.Ctx) error { return c.Next() }
+	NewAuthHandler(NewAuthUsecase(repo, token)).RegisterRoutes(app, pass, pass, Authentication(token, repo))
+
+	request := httptest.NewRequest(http.MethodPost, "/auth/login", strings.NewReader(`{"email":"somchai@example.test","password":"password-123"}`))
+	request.Header.Set("Content-Type", fiber.MIMEApplicationJSON)
+	response, err := app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var login struct{ Data Session }
+	if err := json.NewDecoder(response.Body).Decode(&login); err != nil {
+		t.Fatal(err)
+	}
+	if login.Data.User == nil || login.Data.User.EmployeeID == nil || *login.Data.User.EmployeeID != employeeID {
+		t.Fatalf("login user = %+v", login.Data.User)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+	response, err = app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous /auth/me status = %d, want 401", response.StatusCode)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/auth/me", nil)
+	request.Header.Set("Authorization", "Bearer "+login.Data.AccessToken)
+	response, err = app.Test(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var me struct{ Data AuthenticatedUser }
+	if err := json.NewDecoder(response.Body).Decode(&me); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || me.Data.ID != "user-2" || me.Data.TenantID != "tenant-1" ||
+		me.Data.Role != RoleEmployee || me.Data.FullName != "Somchai" || me.Data.EmployeeID == nil || *me.Data.EmployeeID != employeeID {
+		t.Fatalf("/auth/me status %d body %+v", response.StatusCode, me.Data)
+	}
+}
+
 func TestAuthenticationRequiresValidIdentityTenantRoleAndExpiry(t *testing.T) {
 	token := jwt.New(config.JWT{Secret: "test-secret"})
 	app := fiber.New(fiber.Config{ErrorHandler: httpresponse.Error})

@@ -82,15 +82,36 @@ paths:
                 properties:
                   data:
                     type: object
-                    required: [accessToken, refreshToken, tokenType, expiresIn]
+                    required: [accessToken, refreshToken, tokenType, expiresIn, user]
                     properties:
                       accessToken: { type: string }
                       refreshToken: { type: string }
                       tokenType: { const: Bearer }
                       expiresIn: { type: integer, const: 1800 }
+                      user: { $ref: '#/components/schemas/User' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '422': { $ref: '#/components/responses/ValidationError' }
+  /auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentUser
+      summary: Get the authenticated user
+      description: Returns the caller's account. Employees use `employeeId` for their own `/employees/{id}` routes, such as avatar upload.
+      responses:
+        '200':
+          description: Authenticated user
+          headers:
+            X-Request-Id: { $ref: '#/components/headers/RequestId' }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
   /auth/logout:
     post:
       tags: [Authentication]
@@ -728,11 +749,16 @@ components:
   schemas:
     User:
       type: object
-      required: [id, email, role]
+      required: [id, tenantId, email, role, fullName, employeeId]
       properties:
         id: { type: string }
+        tenantId: { type: string }
         email: { type: string, format: email }
         role: { type: string, enum: [admin, employee] }
+        fullName: { type: string }
+        employeeId:
+          type: [string, 'null']
+          description: The caller's Employee ID; null for Admins.
     EmployeeStatus:
       type: string
       enum: [active, inactive, on_leave]

@@ -64,6 +64,9 @@ type SessionValidator interface {
 type AuthRepository interface {
 	SessionValidator
 	FindActiveUserByEmail(ctx context.Context, email string) (*User, error)
+	FindActiveUser(ctx context.Context, userID, tenantID string) (*User, error)
+	// EmployeeID returns nil when the user has no active Employee, as for Admins.
+	EmployeeID(ctx context.Context, userID, tenantID string) (*string, error)
 	FindUserByRefreshToken(ctx context.Context, hash string, now time.Time) (*User, *RefreshToken, error)
 	CreateSession(ctx context.Context, session *AuthSession, token *RefreshToken) error
 	RotateRefreshToken(ctx context.Context, oldHash string, expectedUser *User, replacement *RefreshToken, now time.Time) error

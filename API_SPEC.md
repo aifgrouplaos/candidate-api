@@ -56,7 +56,8 @@ Before merging API changes, review the applicable OWASP risks: broken object/pro
 | Method and path | Access | Contract |
 | --- | --- | --- |
 | `POST /auth/login` | Public | Accepts `{ "email", "password" }`; returns access and refresh tokens plus the authenticated user. Invalid credentials return `401` without identifying which field was wrong. |
-| `POST /auth/refresh` | Public | Accepts `{ "refreshToken" }`; returns a new access token and a rotated refresh token. Expired, revoked, or reused tokens return `401`. |
+| `POST /auth/refresh` | Public | Accepts `{ "refreshToken" }`; returns a new access token, a rotated refresh token, and the authenticated user. Expired, revoked, or reused tokens return `401`. |
+| `GET /auth/me` | Authenticated | Returns the authenticated user `{ "id", "tenantId", "email", "role", "fullName", "employeeId" }`. `employeeId` is the caller's Employee ID, or `null` for an Admin. |
 | `POST /auth/logout` | Authenticated | Accepts `{ "refreshToken" }`, revokes its session and all refresh tokens in that session immediately, and returns `{ "data": null }`. |
 
 Login response:
