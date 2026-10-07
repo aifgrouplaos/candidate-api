@@ -41,10 +41,10 @@ func setupTenant(tx *gorm.DB, t PreparedTenant) error {
 	if len(admins) > 1 || (len(admins) == 1 && admins[0].Email != t.Tenant.Admin.Email) {
 		return errs.Conflict("tenant already has a different Admin")
 	}
-	if _, err := provisionUser(tx, t.Tenant.ID, t.Tenant.Admin, auth.RoleAdmin, t.AdminHash); err != nil {
+	if _, err := ensureUser(tx, t.Tenant.ID, t.Tenant.Admin, auth.RoleAdmin, t.AdminHash); err != nil {
 		return err
 	}
-	login, err := provisionUser(tx, t.Tenant.ID, t.Tenant.Employee, auth.RoleEmployee, t.EmployeeHash)
+	login, err := ensureUser(tx, t.Tenant.ID, t.Tenant.Employee, auth.RoleEmployee, t.EmployeeHash)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func setupTenant(tx *gorm.DB, t PreparedTenant) error {
 	if err != nil {
 		return err
 	}
-	return chat.ProvisionConversation(tx, t.Tenant.ID, e.ID)
+	return chat.EnsureConversation(tx, t.Tenant.ID, e.ID)
 }
 
 // initialEmployee returns the tenant's first Employee, creating it only in an empty tenant.
@@ -85,7 +85,7 @@ func initialEmployee(tx *gorm.DB, t PreparedTenant, loginID string) (employee.Em
 	return e, tx.Create(&e).Error
 }
 
-func provisionUser(tx *gorm.DB, tenantID string, a Account, role auth.Role, hash string) (*auth.User, error) {
+func ensureUser(tx *gorm.DB, tenantID string, a Account, role auth.Role, hash string) (*auth.User, error) {
 	var user auth.User
 	err := tx.Where("LOWER(email) = ?", a.Email).First(&user).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

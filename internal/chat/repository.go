@@ -32,8 +32,8 @@ func NewChatRepository(db contract.ORM) ChatRepository {
 	return &chatRepository{db: db}
 }
 
-// ProvisionConversation creates the Employee's conversation inside tx unless it exists.
-func ProvisionConversation(tx *gorm.DB, tenantID, employeeID string) error {
+// EnsureConversation creates the Employee's conversation inside tx unless it exists.
+func EnsureConversation(tx *gorm.DB, tenantID, employeeID string) error {
 	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&Conversation{TenantID: tenantID, EmployeeID: employeeID}).Error
 }
 

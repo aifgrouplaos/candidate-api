@@ -297,7 +297,7 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 		}
 		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(authRepository, token))
 		authHandler.RegisterRoutes(api, loginLimit, refreshLimit, protected...)
-		employees := employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db, chat.ProvisionConversation), store, cfg.MinIO.Bucket)
+		employees := employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db, chat.EnsureConversation), store, cfg.MinIO.Bucket)
 		employee.NewEmployeeHandler(employees).RegisterRoutes(api, protected...)
 		project.NewProjectHandler(project.NewProjectUsecase(project.NewProjectRepository(db))).RegisterRoutes(api, protected...)
 		chatHandler := chat.NewChatHandler(chat.NewChatUsecase(chat.NewChatRepository(db), employees.AvatarURL, authRepository))
