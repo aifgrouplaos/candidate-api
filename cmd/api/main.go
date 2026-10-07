@@ -180,37 +180,50 @@ func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantI
 	}
 	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), cleanup)
 	in := bufio.NewReader(os.Stdin)
-	if clearAll {
-		fmt.Printf("Deleting every row in database %q on %s and every avatar in bucket %q.\n", cfg.Postgres.DBName, cfg.Postgres.Host, cfg.MinIO.Bucket)
-		if host := cfg.Postgres.Host; host != "localhost" && host != "127.0.0.1" {
-			if err := confirm(in, "Type the database host", host); err != nil {
-				return err
-			}
-		}
-		if err := confirm(in, "Type the database name", cfg.Postgres.DBName); err != nil {
-			return err
-		}
-		if err := uc.ClearAll(ctx); err != nil {
-			return err
-		}
-		fmt.Println("Cleared the database and avatars. Run tenant-setup, then restart the API.")
-		return nil
+	switch {
+	case clearAll:
+		return clearDatabase(ctx, cfg, uc, in)
+	case tenantID != "":
+		return resetTenant(ctx, uc, in, tenantID)
+	default:
+		return setupTenants(ctx, uc, manifest)
 	}
-	if tenantID != "" {
-		email, err := uc.AdminEmail(ctx, tenantID)
-		if err != nil {
+}
+
+func clearDatabase(ctx context.Context, cfg *config.Config, uc *tenant.TenantUsecase, in *bufio.Reader) error {
+	fmt.Printf("Deleting every row in database %q on %s and every avatar in bucket %q.\n", cfg.Postgres.DBName, cfg.Postgres.Host, cfg.MinIO.Bucket)
+	if host := cfg.Postgres.Host; host != "localhost" && host != "127.0.0.1" {
+		if err := confirm(in, "Type the database host", host); err != nil {
 			return err
 		}
-		fmt.Printf("Deleting tenant %s, its Admin %s, and all its data.\n", tenantID, email)
-		if err := confirm(in, "Type the Admin email", email); err != nil {
-			return err
-		}
-		if err := uc.Reset(ctx, tenantID); err != nil {
-			return err
-		}
-		fmt.Printf("Deleted candidate tenant %s. Run tenant-setup to recreate it with a new tenant ID.\n", tenantID)
-		return nil
 	}
+	if err := confirm(in, "Type the database name", cfg.Postgres.DBName); err != nil {
+		return err
+	}
+	if err := uc.ClearAll(ctx); err != nil {
+		return err
+	}
+	fmt.Println("Cleared the database and avatars. Run tenant-setup, then restart the API.")
+	return nil
+}
+
+func resetTenant(ctx context.Context, uc *tenant.TenantUsecase, in *bufio.Reader, tenantID string) error {
+	email, err := uc.AdminEmail(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Deleting tenant %s, its Admin %s, and all its data.\n", tenantID, email)
+	if err := confirm(in, "Type the Admin email", email); err != nil {
+		return err
+	}
+	if err := uc.Reset(ctx, tenantID); err != nil {
+		return err
+	}
+	fmt.Printf("Deleted candidate tenant %s. Run tenant-setup to recreate it with a new tenant ID.\n", tenantID)
+	return nil
+}
+
+func setupTenants(ctx context.Context, uc *tenant.TenantUsecase, manifest string) error {
 	tenants, err := readManifest(manifest)
 	if err != nil {
 		return err
