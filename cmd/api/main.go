@@ -196,7 +196,7 @@ func removeTenantAvatars(client *miniogo.Client, bucket string) tenant.CleanupAv
 		// List the full prefix, including objects no longer referenced by an Employee.
 		listCtx, stop := context.WithCancel(ctx)
 		defer stop()
-		prefix := "avatars/" + id + "/"
+		prefix := "files/avatars/" + id + "/"
 		for object := range client.ListObjects(listCtx, bucket, miniogo.ListObjectsOptions{Prefix: prefix, Recursive: true, WithVersions: true}) {
 			if object.Err != nil {
 				return object.Err

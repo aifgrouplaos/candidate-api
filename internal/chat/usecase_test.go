@@ -32,7 +32,7 @@ type memoryRepository struct {
 }
 
 func (r *memoryRepository) conversation() *Conversation {
-	c := &Conversation{ID: "c1", TenantID: tenantA, EmployeeID: "e1", EmployeeName: "Somchai", EmployeeAvatar: ptr("avatars/" + tenantA + "/e1/a.png")}
+	c := &Conversation{ID: "c1", TenantID: tenantA, EmployeeID: "e1", EmployeeName: "Somchai", EmployeeAvatar: ptr("files/avatars/" + tenantA + "/e1/a.png")}
 	if len(r.messages) != 0 {
 		c.LastMessage = r.messages[len(r.messages)-1]
 	}
@@ -192,7 +192,7 @@ func TestListPresentsConversationsWithSignedAvatar(t *testing.T) {
 		t.Fatalf("meta = %+v", meta)
 	}
 	got, _ := json.Marshal(views[0])
-	want := `{"id":"c1","employee":{"id":"e1","fullName":"Somchai","avatarUrl":"https://files.example.test/` + tenantA + `/avatars/` + tenantA + `/e1/a.png"},"lastMessage":null,"unreadCount":0,"updatedAt":"0001-01-01T00:00:00Z"}`
+	want := `{"id":"c1","employee":{"id":"e1","fullName":"Somchai","avatarUrl":"https://files.example.test/` + tenantA + `/files/avatars/` + tenantA + `/e1/a.png"},"lastMessage":null,"unreadCount":0,"updatedAt":"0001-01-01T00:00:00Z"}`
 	if string(got) != want {
 		t.Fatalf("view = %s", got)
 	}

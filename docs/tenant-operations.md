@@ -65,7 +65,7 @@ Reset requires configured private storage even if the tenant has no recorded
 avatars. It requires exactly one existing Admin in the selected tenant. It:
 
 1. Revokes all tenant sessions and refresh tokens, including the Admin's.
-2. Lists and deletes every object under exactly `avatars/<tenant UUID>/`, including
+2. Lists and deletes every object under exactly `files/avatars/<tenant UUID>/`, including
    orphaned uploads, avatars belonging to Deleted Employees, historical object
    versions, and delete markers. Storage credentials must allow listing versions
    and deleting versions as well as ordinary objects.
@@ -110,7 +110,7 @@ For storage and candidate login verification in a disposable test environment:
    task types and priorities, and each Employee's initial conversation.
 2. Upload an avatar in each tenant, send a chat message, and create a Project with a
    Phase and Task in each tenant. Keep both tenants' tokens and Project IDs.
-   Optionally put an orphan object under `avatars/<first tenant UUID>/` using the
+   Optionally put an orphan object under `files/avatars/<first tenant UUID>/` using the
    operator's S3 client; reset must remove it too.
 3. Stop all replicas. Reset the first tenant twice. With an S3 client, verify its
    avatar prefix is empty while the second tenant's objects remain unchanged.

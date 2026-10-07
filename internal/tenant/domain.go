@@ -40,6 +40,6 @@ type TenantRepository interface {
 	Clear(context.Context, string) error
 }
 
-// CleanupAvatars removes all objects under exactly avatars/<tenant UUID>/,
+// CleanupAvatars removes all objects under exactly files/avatars/<tenant UUID>/,
 // including orphaned uploads, and reports listing and deletion failures.
 type CleanupAvatars func(context.Context, string) error

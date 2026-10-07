@@ -403,7 +403,7 @@ func TestUploadAvatarStoresPrivateObjectAndReturnsPresignedURL(t *testing.T) {
 	if stored == nil || view.AvatarURL == nil || *stored == *view.AvatarURL {
 		t.Fatalf("stored %v view %v", stored, view.AvatarURL)
 	}
-	if !strings.HasPrefix(*stored, "avatars/"+tenantA+"/e1/") || !strings.HasSuffix(*stored, ".jpg") {
+	if !strings.HasPrefix(*stored, "files/avatars/"+tenantA+"/e1/") || !strings.HasSuffix(*stored, ".jpg") {
 		t.Fatalf("object key = %s", *stored)
 	}
 	if *view.AvatarURL != "https://files.example.test/"+avatarBucket+"/"+*stored+"?X-Amz-Expires=900" {
@@ -618,7 +618,7 @@ func TestPreviousAvatarDeleteFailureKeepsNewObject(t *testing.T) {
 
 func TestAvatarRetrievalRequiresAuthorization(t *testing.T) {
 	repo := newMemoryRepository()
-	key := "avatars/" + tenantA + "/e1/existing.jpg"
+	key := "files/avatars/" + tenantA + "/e1/existing.jpg"
 	repo.employees["e1"].AvatarURL = &key
 	files := newMemoryStorage()
 	files.objects[avatarBucket+"/"+key] = imageBytes(16, jpegMagic)
@@ -657,7 +657,7 @@ func TestAvatarRetrievalRequiresAuthorization(t *testing.T) {
 
 func TestAvatarKeyOutsideTenantIsNotPresigned(t *testing.T) {
 	repo := newMemoryRepository()
-	key := "avatars/" + tenantB + "/e1/other.jpg"
+	key := "files/avatars/" + tenantB + "/e1/other.jpg"
 	repo.employees["e1"].AvatarURL = &key
 	files := newMemoryStorage()
 	view, err := NewEmployeeUsecase(repo, files, avatarBucket).Get(context.Background(), adminA, "e1")
@@ -668,7 +668,7 @@ func TestAvatarKeyOutsideTenantIsNotPresigned(t *testing.T) {
 
 func TestAvatarURLFailureDoesNotLeakObjectKey(t *testing.T) {
 	repo := newMemoryRepository()
-	key := "avatars/" + tenantA + "/e1/existing.jpg"
+	key := "files/avatars/" + tenantA + "/e1/existing.jpg"
 	repo.employees["e1"].AvatarURL = &key
 	files := newMemoryStorage()
 	files.failURL = true
@@ -680,7 +680,7 @@ func TestAvatarURLFailureDoesNotLeakObjectKey(t *testing.T) {
 
 func TestProfileUpdateKeepsAvatarObject(t *testing.T) {
 	repo := newMemoryRepository()
-	key := "avatars/" + tenantA + "/e1/keep.jpg"
+	key := "files/avatars/" + tenantA + "/e1/keep.jpg"
 	repo.employees["e1"].AvatarURL = &key
 	files := newMemoryStorage()
 	updated, err := NewEmployeeUsecase(repo, files, avatarBucket).Update(context.Background(), employeeA, "e1", patch(`{"version":1,"phone":null}`))
@@ -690,7 +690,7 @@ func TestProfileUpdateKeepsAvatarObject(t *testing.T) {
 	if repo.employees["e1"].AvatarURL == nil || *repo.employees["e1"].AvatarURL != key {
 		t.Fatalf("stored key = %v", repo.employees["e1"].AvatarURL)
 	}
-	if updated.AvatarURL == nil || strings.HasPrefix(*updated.AvatarURL, "avatars/") {
+	if updated.AvatarURL == nil || strings.HasPrefix(*updated.AvatarURL, "files/avatars/") {
 		t.Fatalf("view = %v", updated.AvatarURL)
 	}
 }
