@@ -231,6 +231,10 @@ func readManifest(path string) ([]tenant.Tenant, error) {
 }
 
 func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
+	// PgBouncer transaction pooling breaks pgx's cached prepared statements.
+	if os.Getenv("DB_PGBOUNCER") == "true" {
+		cfg.DSN += " default_query_exec_mode=simple_protocol"
+	}
 	gormDB, err := gormadapter.New(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("postgres connect failed: %w", err)
