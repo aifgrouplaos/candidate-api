@@ -3,6 +3,7 @@ package tenant_test
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"testing"
 	"time"
@@ -62,55 +63,20 @@ func TestProvisionAndResetIsolationAgainstPostgres(t *testing.T) {
 	provision()
 	provision()
 	// Stable identity and unchanged password hashes across repeated setup.
-	var users []auth.User
-	if err := db.Raw().Order("email").Find(&users).Error; err != nil {
-		t.Fatal(err)
-	}
-	if len(users) != 4 {
-		t.Fatalf("users=%d", len(users))
-	}
-	hashes := map[string]string{}
-	for _, u := range users {
-		hashes[u.ID] = u.PasswordHash
+	hashes := userHashes(t, db.Raw())
+	if len(hashes) != 4 {
+		t.Fatalf("users=%d", len(hashes))
 	}
 	provision()
-	if err := db.Raw().Find(&users).Error; err != nil {
-		t.Fatal(err)
-	}
-	for _, u := range users {
-		if hashes[u.ID] != u.PasswordHash {
-			t.Fatal("repeat provision changed a password")
-		}
+	if !maps.Equal(hashes, userHashes(t, db.Raw())) {
+		t.Fatal("repeat provision changed a password")
 	}
 	for i, candidate := range ts {
-		var e employee.Employee
-		var c chat.Conversation
-		if err := db.Raw().Where("tenant_id = ?", candidate.ID).First(&e).Error; err != nil {
-			t.Fatal(err)
-		}
-		if err := db.Raw().Where("tenant_id = ?", candidate.ID).First(&c).Error; err != nil {
-			t.Fatal(err)
-		}
-		session := auth.AuthSession{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), UserID: *e.UserID, TenantID: candidate.ID}
-		mustCreate(t, db.Raw(), &session)
-		mustCreate(t, db.Raw(), &auth.RefreshToken{UserID: *e.UserID, SessionID: session.ID, TokenHash: fmt.Sprintf("token-%d", i), ExpiresAt: time.Now().Add(time.Hour)})
-		var admin auth.User
-		if err := db.Raw().Where("tenant_id = ? AND role = ?", candidate.ID, auth.RoleAdmin).First(&admin).Error; err != nil {
-			t.Fatal(err)
-		}
-		adminSession := auth.AuthSession{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+20), UserID: admin.ID, TenantID: candidate.ID}
-		mustCreate(t, db.Raw(), &adminSession)
-		mustCreate(t, db.Raw(), &auth.RefreshToken{UserID: admin.ID, SessionID: adminSession.ID, TokenHash: fmt.Sprintf("admin-token-%d", i), ExpiresAt: time.Now().Add(time.Hour)})
-		mustCreate(t, db.Raw(), &chat.Message{ConversationID: c.ID, SenderID: *e.UserID, Sequence: 1, ClientMessageID: "one", Text: "hello"})
-		now := time.Now()
-		p := project.Project{TenantID: candidate.ID, Code: "ASSESSMENT", IdempotencyKey: "one", RequestHash: "hash", Name: "Assessment", OwnerID: e.ID, StartDate: now, EndDate: now, Phases: []project.Phase{{Name: "Phase", StartDate: now, EndDate: now, Tasks: []project.Task{{Title: "Task", Type: project.TaskFeature, Priority: project.PriorityLow, AssigneeID: e.ID, EstimateHours: 1, DueDate: now}}}}}
-		mustCreate(t, db.Raw(), &p)
-		// Include Deleted Employees in reset coverage.
-		if i == 0 {
-			if err := db.Raw().Delete(&e).Error; err != nil {
-				t.Fatal(err)
-			}
-		}
+		seedTenantActivity(t, db.Raw(), i, candidate.ID)
+	}
+	// Include Deleted Employees in reset coverage.
+	if err := db.Raw().Where("tenant_id = ?", ts[0].ID).Delete(&employee.Employee{}).Error; err != nil {
+		t.Fatal(err)
 	}
 	for range 2 {
 		if err := uc.Reset(ctx, ts[0].ID); err != nil {
@@ -136,6 +102,47 @@ func TestProvisionAndResetIsolationAgainstPostgres(t *testing.T) {
 	provision()
 	assertCount(t, db.Raw().Model(&employee.Employee{}).Where("tenant_id = ?", ts[0].ID), 1)
 	assertCount(t, db.Raw().Model(&chat.Conversation{}).Where("tenant_id = ?", ts[0].ID), 1)
+}
+
+func userHashes(t *testing.T, db *gorm.DB) map[string]string {
+	t.Helper()
+	var users []auth.User
+	if err := db.Find(&users).Error; err != nil {
+		t.Fatal(err)
+	}
+	hashes := map[string]string{}
+	for _, u := range users {
+		hashes[u.ID] = u.PasswordHash
+	}
+	return hashes
+}
+
+// seedTenantActivity gives a tenant live Employee and Admin sessions, a message, and a Project.
+func seedTenantActivity(t *testing.T, db *gorm.DB, i int, tenantID string) {
+	t.Helper()
+	var e employee.Employee
+	var c chat.Conversation
+	var admin auth.User
+	mustFirst(t, db.Where("tenant_id = ?", tenantID), &e)
+	mustFirst(t, db.Where("tenant_id = ?", tenantID), &c)
+	mustFirst(t, db.Where("tenant_id = ? AND role = ?", tenantID, auth.RoleAdmin), &admin)
+	session := auth.AuthSession{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), UserID: *e.UserID, TenantID: tenantID}
+	mustCreate(t, db, &session)
+	mustCreate(t, db, &auth.RefreshToken{UserID: *e.UserID, SessionID: session.ID, TokenHash: fmt.Sprintf("token-%d", i), ExpiresAt: time.Now().Add(time.Hour)})
+	adminSession := auth.AuthSession{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+20), UserID: admin.ID, TenantID: tenantID}
+	mustCreate(t, db, &adminSession)
+	mustCreate(t, db, &auth.RefreshToken{UserID: admin.ID, SessionID: adminSession.ID, TokenHash: fmt.Sprintf("admin-token-%d", i), ExpiresAt: time.Now().Add(time.Hour)})
+	mustCreate(t, db, &chat.Message{ConversationID: c.ID, SenderID: *e.UserID, Sequence: 1, ClientMessageID: "one", Text: "hello"})
+	now := time.Now()
+	p := project.Project{TenantID: tenantID, Code: "ASSESSMENT", IdempotencyKey: "one", RequestHash: "hash", Name: "Assessment", OwnerID: e.ID, StartDate: now, EndDate: now, Phases: []project.Phase{{Name: "Phase", StartDate: now, EndDate: now, Tasks: []project.Task{{Title: "Task", Type: project.TaskFeature, Priority: project.PriorityLow, AssigneeID: e.ID, EstimateHours: 1, DueDate: now}}}}}
+	mustCreate(t, db, &p)
+}
+
+func mustFirst(t *testing.T, query *gorm.DB, dest any) {
+	t.Helper()
+	if err := query.First(dest).Error; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func mustCreate(t *testing.T, db *gorm.DB, value any) {
