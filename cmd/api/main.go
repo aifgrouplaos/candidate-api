@@ -21,11 +21,11 @@ import (
 	"github.com/BounkhongDev/bkgo/config"
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/logger"
-	"github.com/aifgrouplaos/candidate-api/internal/assessment"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/internal/chat"
 	"github.com/aifgrouplaos/candidate-api/internal/employee"
 	"github.com/aifgrouplaos/candidate-api/internal/project"
+	"github.com/aifgrouplaos/candidate-api/internal/tenant"
 	"github.com/aifgrouplaos/candidate-api/pkg/apidocs"
 	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
 	"github.com/aifgrouplaos/candidate-api/pkg/ratelimit"
@@ -53,7 +53,7 @@ func run() error {
 		return fmt.Errorf("config load failed: %w", err)
 	}
 	if provision != "" || reset != "" {
-		return runAssessment(ctx, cfg, provision, reset)
+		return runTenantCommand(ctx, cfg, provision, reset)
 	}
 	trustedProxies, allowedOrigins, err := prepareServer(cfg)
 	if err != nil {
@@ -147,7 +147,7 @@ func prepareServer(cfg *config.Config) ([]string, string, error) {
 }
 
 // Operator commands share the composition root, never the HTTP route tree.
-func runAssessment(ctx context.Context, cfg *config.Config, manifest, tenantID string) error {
+func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantID string) error {
 	if !cfg.PostgresEnabled {
 		return errors.New("assessment operations require DB_ENABLED=true")
 	}
@@ -161,7 +161,7 @@ func runAssessment(ctx context.Context, cfg *config.Config, manifest, tenantID s
 		return err
 	}
 	defer db.Close()
-	var cleanup assessment.CleanupAvatars
+	var cleanup tenant.CleanupAvatars
 	if tenantID != "" {
 		storage, err := minioadapter.New(ctx, cfg.MinIO)
 		if err != nil {
@@ -169,7 +169,7 @@ func runAssessment(ctx context.Context, cfg *config.Config, manifest, tenantID s
 		}
 		cleanup = removeTenantAvatars(storage.Client(), cfg.MinIO.Bucket)
 	}
-	uc := assessment.NewAssessmentUsecase(assessment.NewAssessmentRepository(db), cleanup)
+	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), cleanup)
 	if tenantID != "" {
 		if err := uc.Reset(ctx, tenantID); err != nil {
 			return err
@@ -188,7 +188,7 @@ func runAssessment(ctx context.Context, cfg *config.Config, manifest, tenantID s
 	return nil
 }
 
-func removeTenantAvatars(client *miniogo.Client, bucket string) assessment.CleanupAvatars {
+func removeTenantAvatars(client *miniogo.Client, bucket string) tenant.CleanupAvatars {
 	return func(ctx context.Context, id string) error {
 		// List the full prefix, including objects no longer referenced by an Employee.
 		listCtx, stop := context.WithCancel(ctx)
@@ -209,7 +209,7 @@ func removeTenantAvatars(client *miniogo.Client, bucket string) assessment.Clean
 	}
 }
 
-func readManifest(path string) ([]assessment.Tenant, error) {
+func readManifest(path string) ([]tenant.Tenant, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, errors.New("cannot open assessment manifest")
@@ -217,7 +217,7 @@ func readManifest(path string) ([]assessment.Tenant, error) {
 	defer file.Close()
 	decoder := json.NewDecoder(io.LimitReader(file, 64*1024))
 	decoder.DisallowUnknownFields()
-	var tenants []assessment.Tenant
+	var tenants []tenant.Tenant
 	if err := decoder.Decode(&tenants); err != nil {
 		return nil, errors.New("invalid assessment JSON manifest")
 	}

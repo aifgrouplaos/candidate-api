@@ -1,4 +1,4 @@
-package assessment
+package tenant
 
 import (
 	"context"
@@ -12,17 +12,17 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type AssessmentUsecase struct {
-	repo    AssessmentRepository
+type TenantUsecase struct {
+	repo    TenantRepository
 	cleanup CleanupAvatars
 }
 
-func NewAssessmentUsecase(repo AssessmentRepository, cleanup CleanupAvatars) *AssessmentUsecase {
-	return &AssessmentUsecase{repo: repo, cleanup: cleanup}
+func NewTenantUsecase(repo TenantRepository, cleanup CleanupAvatars) *TenantUsecase {
+	return &TenantUsecase{repo: repo, cleanup: cleanup}
 }
 
 // SetupTenants validates all accounts before hashing or changing persistence.
-func (u *AssessmentUsecase) SetupTenants(ctx context.Context, tenants []Tenant, getenv func(string) string) error {
+func (u *TenantUsecase) SetupTenants(ctx context.Context, tenants []Tenant, getenv func(string) string) error {
 	if len(tenants) < 1 || len(tenants) > 100 {
 		return errs.BadRequest("provide between 1 and 100 candidate tenants")
 	}
@@ -80,7 +80,7 @@ func (u *AssessmentUsecase) SetupTenants(ctx context.Context, tenants []Tenant, 
 
 // Reset requires stopped API replicas. Revocation commits before storage cleanup,
 // so failed cleanup never restores access. Database records remain for a retry.
-func (u *AssessmentUsecase) Reset(ctx context.Context, tenantID string) error {
+func (u *TenantUsecase) Reset(ctx context.Context, tenantID string) error {
 	if err := validTenantID(tenantID); err != nil {
 		return err
 	}

@@ -1,4 +1,4 @@
-package assessment
+package tenant
 
 import (
 	"context"
@@ -27,7 +27,7 @@ type PreparedTenant struct {
 	DepartmentName  string
 }
 
-type AssessmentRepository interface {
+type TenantRepository interface {
 	// SetupTenants atomically creates missing accounts and initial conversations.
 	// Existing accounts must match; their passwords are unchanged.
 	SetupTenants(context.Context, []PreparedTenant) error

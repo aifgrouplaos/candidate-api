@@ -1,4 +1,4 @@
-package assessment
+package tenant
 
 import (
 	"context"
@@ -13,13 +13,13 @@ import (
 	"gorm.io/gorm"
 )
 
-type assessmentRepository struct{ db contract.ORM }
+type tenantRepository struct{ db contract.ORM }
 
-func NewAssessmentRepository(db contract.ORM) AssessmentRepository {
-	return &assessmentRepository{db: db}
+func NewTenantRepository(db contract.ORM) TenantRepository {
+	return &tenantRepository{db: db}
 }
 
-func (r *assessmentRepository) SetupTenants(ctx context.Context, tenants []PreparedTenant) error {
+func (r *tenantRepository) SetupTenants(ctx context.Context, tenants []PreparedTenant) error {
 	return r.db.Transaction(ctx, func(tx *gorm.DB) error {
 		for _, t := range tenants {
 			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "employees:"+t.Tenant.ID).Error; err != nil {
@@ -88,7 +88,7 @@ func provisionUser(tx *gorm.DB, tenantID string, a Account, role auth.Role, hash
 	return &user, nil
 }
 
-func (r *assessmentRepository) Revoke(ctx context.Context, tenantID string) error {
+func (r *tenantRepository) Revoke(ctx context.Context, tenantID string) error {
 	return r.db.Transaction(ctx, func(tx *gorm.DB) error {
 		var count int64
 		if err := tx.Model(&auth.User{}).Where("tenant_id = ? AND role = ?", tenantID, auth.RoleAdmin).Count(&count).Error; err != nil {
@@ -105,7 +105,7 @@ func (r *assessmentRepository) Revoke(ctx context.Context, tenantID string) erro
 	})
 }
 
-func (r *assessmentRepository) Clear(ctx context.Context, tenantID string) error {
+func (r *tenantRepository) Clear(ctx context.Context, tenantID string) error {
 	return r.db.Transaction(ctx, func(tx *gorm.DB) error {
 		// Explicit child deletion works independently of cascade migrations.
 		statements := []string{

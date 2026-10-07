@@ -1,4 +1,4 @@
-package assessment_test
+package tenant_test
 
 import (
 	"context"
@@ -9,15 +9,15 @@ import (
 
 	gormadapter "github.com/BounkhongDev/bkgo/adapter/gorm"
 	"github.com/BounkhongDev/bkgo/config"
-	"github.com/aifgrouplaos/candidate-api/internal/assessment"
 	"github.com/aifgrouplaos/candidate-api/internal/auth"
 	"github.com/aifgrouplaos/candidate-api/internal/chat"
 	"github.com/aifgrouplaos/candidate-api/internal/employee"
 	"github.com/aifgrouplaos/candidate-api/internal/project"
+	"github.com/aifgrouplaos/candidate-api/internal/tenant"
 	"gorm.io/gorm"
 )
 
-func assessmentDB(t *testing.T) *gormadapter.DB {
+func tenantDB(t *testing.T) *gormadapter.DB {
 	t.Helper()
 	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
@@ -27,7 +27,7 @@ func assessmentDB(t *testing.T) *gormadapter.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	schema := fmt.Sprintf("assessment_test_%d", time.Now().UnixNano())
+	schema := fmt.Sprintf("tenant_test_%d", time.Now().UnixNano())
 	if err := admin.Raw().Exec("CREATE SCHEMA " + schema).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -47,11 +47,11 @@ func assessmentDB(t *testing.T) *gormadapter.DB {
 }
 
 func TestProvisionAndResetIsolationAgainstPostgres(t *testing.T) {
-	db := assessmentDB(t)
+	db := tenantDB(t)
 	ctx := context.Background()
-	repo := assessment.NewAssessmentRepository(db)
+	repo := tenant.NewTenantRepository(db)
 	var cleaned []string
-	uc := assessment.NewAssessmentUsecase(repo, func(_ context.Context, id string) error { cleaned = append(cleaned, id); return nil })
+	uc := tenant.NewTenantUsecase(repo, func(_ context.Context, id string) error { cleaned = append(cleaned, id); return nil })
 	ts := tenants()
 	provision := func() {
 		t.Helper()
@@ -82,28 +82,28 @@ func TestProvisionAndResetIsolationAgainstPostgres(t *testing.T) {
 			t.Fatal("repeat provision changed a password")
 		}
 	}
-	for i, tenant := range ts {
+	for i, candidate := range ts {
 		var e employee.Employee
 		var c chat.Conversation
-		if err := db.Raw().Where("tenant_id = ?", tenant.ID).First(&e).Error; err != nil {
+		if err := db.Raw().Where("tenant_id = ?", candidate.ID).First(&e).Error; err != nil {
 			t.Fatal(err)
 		}
-		if err := db.Raw().Where("tenant_id = ?", tenant.ID).First(&c).Error; err != nil {
+		if err := db.Raw().Where("tenant_id = ?", candidate.ID).First(&c).Error; err != nil {
 			t.Fatal(err)
 		}
-		session := auth.AuthSession{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), UserID: *e.UserID, TenantID: tenant.ID}
+		session := auth.AuthSession{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+10), UserID: *e.UserID, TenantID: candidate.ID}
 		mustCreate(t, db.Raw(), &session)
 		mustCreate(t, db.Raw(), &auth.RefreshToken{UserID: *e.UserID, SessionID: session.ID, TokenHash: fmt.Sprintf("token-%d", i), ExpiresAt: time.Now().Add(time.Hour)})
 		var admin auth.User
-		if err := db.Raw().Where("tenant_id = ? AND role = ?", tenant.ID, auth.RoleAdmin).First(&admin).Error; err != nil {
+		if err := db.Raw().Where("tenant_id = ? AND role = ?", candidate.ID, auth.RoleAdmin).First(&admin).Error; err != nil {
 			t.Fatal(err)
 		}
-		adminSession := auth.AuthSession{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+20), UserID: admin.ID, TenantID: tenant.ID}
+		adminSession := auth.AuthSession{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i+20), UserID: admin.ID, TenantID: candidate.ID}
 		mustCreate(t, db.Raw(), &adminSession)
 		mustCreate(t, db.Raw(), &auth.RefreshToken{UserID: admin.ID, SessionID: adminSession.ID, TokenHash: fmt.Sprintf("admin-token-%d", i), ExpiresAt: time.Now().Add(time.Hour)})
 		mustCreate(t, db.Raw(), &chat.Message{ConversationID: c.ID, SenderID: *e.UserID, Sequence: 1, ClientMessageID: "one", Text: "hello"})
 		now := time.Now()
-		p := project.Project{TenantID: tenant.ID, Code: "ASSESSMENT", IdempotencyKey: "one", RequestHash: "hash", Name: "Assessment", OwnerID: e.ID, StartDate: now, EndDate: now, Phases: []project.Phase{{Name: "Phase", StartDate: now, EndDate: now, Tasks: []project.Task{{Title: "Task", Type: project.TaskFeature, Priority: project.PriorityLow, AssigneeID: e.ID, EstimateHours: 1, DueDate: now}}}}}
+		p := project.Project{TenantID: candidate.ID, Code: "ASSESSMENT", IdempotencyKey: "one", RequestHash: "hash", Name: "Assessment", OwnerID: e.ID, StartDate: now, EndDate: now, Phases: []project.Phase{{Name: "Phase", StartDate: now, EndDate: now, Tasks: []project.Task{{Title: "Task", Type: project.TaskFeature, Priority: project.PriorityLow, AssigneeID: e.ID, EstimateHours: 1, DueDate: now}}}}}
 		mustCreate(t, db.Raw(), &p)
 		// Include Deleted Employees in reset coverage.
 		if i == 0 {
@@ -156,11 +156,11 @@ func assertCount(t *testing.T, query *gorm.DB, want int64) {
 }
 
 func TestProvisionConflictRollsBackBothTenants(t *testing.T) {
-	db := assessmentDB(t)
+	db := tenantDB(t)
 	ctx := context.Background()
 	ts := tenants()
 	mustCreate(t, db.Raw(), &auth.User{TenantID: "00000000-0000-4000-8000-000000000003", Email: ts[1].Employee.Email, FullName: "Other Tenant", Role: auth.RoleEmployee, PasswordHash: "existing", Active: true})
-	uc := assessment.NewAssessmentUsecase(assessment.NewAssessmentRepository(db), nil)
+	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), nil)
 	if err := uc.SetupTenants(ctx, ts, func(string) string { return "test-only-password" }); err == nil {
 		t.Fatal("accepted cross-tenant email")
 	}
@@ -170,26 +170,26 @@ func TestProvisionConflictRollsBackBothTenants(t *testing.T) {
 }
 
 func TestUnknownTenantResetDoesNotTouchStorage(t *testing.T) {
-	db := assessmentDB(t)
-	uc := assessment.NewAssessmentUsecase(assessment.NewAssessmentRepository(db), func(context.Context, string) error { t.Fatal("unknown tenant reached storage"); return nil })
+	db := tenantDB(t)
+	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), func(context.Context, string) error { t.Fatal("unknown tenant reached storage"); return nil })
 	if err := uc.Reset(context.Background(), tenants()[0].ID); err == nil {
 		t.Fatal("accepted unknown tenant")
 	}
 }
 
 func TestProvisionTenCandidateTenantsAgainstPostgres(t *testing.T) {
-	db := assessmentDB(t)
-	uc := assessment.NewAssessmentUsecase(assessment.NewAssessmentRepository(db), nil)
+	db := tenantDB(t)
+	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), nil)
 	for range 2 {
 		if err := uc.SetupTenants(context.Background(), tenCandidates(), func(string) string { return "test-only-password" }); err != nil {
 			t.Fatal(err)
 		}
 	}
 	assertCount(t, db.Raw().Model(&auth.User{}), 20)
-	for _, tenant := range tenCandidates() {
-		assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ? AND role = ? AND active = ?", tenant.ID, auth.RoleAdmin, true), 1)
-		assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ? AND role = ? AND active = ?", tenant.ID, auth.RoleEmployee, true), 1)
-		assertCount(t, db.Raw().Model(&employee.Employee{}).Where("tenant_id = ?", tenant.ID), 1)
-		assertCount(t, db.Raw().Model(&chat.Conversation{}).Where("tenant_id = ?", tenant.ID), 1)
+	for _, candidate := range tenCandidates() {
+		assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ? AND role = ? AND active = ?", candidate.ID, auth.RoleAdmin, true), 1)
+		assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ? AND role = ? AND active = ?", candidate.ID, auth.RoleEmployee, true), 1)
+		assertCount(t, db.Raw().Model(&employee.Employee{}).Where("tenant_id = ?", candidate.ID), 1)
+		assertCount(t, db.Raw().Model(&chat.Conversation{}).Where("tenant_id = ?", candidate.ID), 1)
 	}
 }

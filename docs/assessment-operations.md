@@ -86,7 +86,7 @@ Run repository verification in temporary schemas of a **local test database**:
 
 ```powershell
 $env:TEST_POSTGRES_DSN='host=localhost port=5435 user=postgres password=secret dbname=candidate-api_db sslmode=disable'
-go test ./internal/assessment -count=1 -v
+go test ./internal/tenant -count=1 -v
 ```
 
 The tests verify ten-candidate setup creates ten tenants and twenty active accounts
