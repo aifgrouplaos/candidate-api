@@ -90,6 +90,12 @@ func TestE2E(t *testing.T) {
 		t.Errorf("after reset, initial Employee conversations = %+v, want one empty", conversations)
 	}
 
+	if status := download(t, first.avatar); status != 404 {
+		t.Errorf("reset tenant's avatar download status = %d, want 404", status)
+	}
+	if status := download(t, second.avatar); status != 200 {
+		t.Errorf("other tenant's avatar download status = %d, want 200", status)
+	}
 	second.admin.call("GET", "/employees/"+second.createdID, nil, 200, nil)
 	second.admin.call("GET", "/projects/"+second.projectID, nil, 200, nil)
 	var messages []struct{ ID string }
@@ -106,7 +112,7 @@ type tenantRun struct {
 	adminAccount, employeeAccount  credentials
 	created                        credentials
 	admin, employee, createdClient client
-	createdID, projectID           string
+	createdID, projectID, avatar   string
 	conversationID, messageID      string
 }
 
@@ -162,10 +168,9 @@ func exercise(t *testing.T, base string, tn tenant.Tenant) tenantRun {
 	if employee.AvatarURL == nil {
 		t.Fatal("avatar upload returned no avatarUrl")
 	}
-	if res, err := http.Get(*employee.AvatarURL); err != nil || res.StatusCode != 200 {
-		t.Errorf("presigned avatar download failed: %v %v", res, err)
-	} else {
-		res.Body.Close()
+	run.avatar = *employee.AvatarURL
+	if status := download(t, run.avatar); status != 200 {
+		t.Errorf("presigned avatar download status = %d", status)
 	}
 
 	project := map[string]any{
@@ -376,6 +381,16 @@ func awaitEvent(t *testing.T, conn *websocket.Conn, eventType, id string) {
 			return
 		}
 	}
+}
+
+func download(t *testing.T, url string) int {
+	t.Helper()
+	res, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("avatar download: %v", err)
+	}
+	res.Body.Close()
+	return res.StatusCode
 }
 
 func containsID(items []struct{ ID string }, id string) bool {
