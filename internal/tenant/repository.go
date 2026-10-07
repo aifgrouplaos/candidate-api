@@ -22,54 +22,67 @@ func NewTenantRepository(db contract.ORM) TenantRepository {
 func (r *tenantRepository) SetupTenants(ctx context.Context, tenants []PreparedTenant) error {
 	return r.db.Transaction(ctx, func(tx *gorm.DB) error {
 		for _, t := range tenants {
-			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "employees:"+t.Tenant.ID).Error; err != nil {
-				return err
-			}
-			var admins []auth.User
-			if err := tx.Where("tenant_id = ? AND role = ?", t.Tenant.ID, auth.RoleAdmin).Find(&admins).Error; err != nil {
-				return err
-			}
-			if len(admins) > 1 || (len(admins) == 1 && admins[0].Email != t.Tenant.Admin.Email) {
-				return errs.Conflict("tenant already has a different Admin")
-			}
-			if _, err := provisionUser(tx, t.Tenant.ID, t.Tenant.Admin, auth.RoleAdmin, t.AdminHash); err != nil {
-				return err
-			}
-			login, err := provisionUser(tx, t.Tenant.ID, t.Tenant.Employee, auth.RoleEmployee, t.EmployeeHash)
-			if err != nil {
-				return err
-			}
-			var e employee.Employee
-			err = tx.Unscoped().Where("LOWER(email) = ?", t.Tenant.Employee.Email).First(&e).Error
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				var count int64
-				if err := tx.Unscoped().Model(&employee.Employee{}).Where("tenant_id = ?", t.Tenant.ID).Count(&count).Error; err != nil {
-					return err
-				}
-				if count != 0 {
-					return errs.Conflict("tenant has Employees but its initial Employee is missing; reset first")
-				}
-				var department employee.Department
-				if err := tx.Where("name = ?", t.DepartmentName).First(&department).Error; err != nil {
-					return err
-				}
-				e = t.EmployeeProfile
-				e.UserID = &login.ID
-				e.DepartmentID = &department.ID
-				if err := tx.Create(&e).Error; err != nil {
-					return err
-				}
-			} else if err != nil {
-				return err
-			} else if e.TenantID != t.Tenant.ID || e.UserID == nil || *e.UserID != login.ID || e.DeletedAt.Valid {
-				return errs.Conflict("initial Employee does not match; reset first")
-			}
-			if err := chat.ProvisionConversation(tx, t.Tenant.ID, e.ID); err != nil {
+			if err := setupTenant(tx, t); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+func setupTenant(tx *gorm.DB, t PreparedTenant) error {
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "employees:"+t.Tenant.ID).Error; err != nil {
+		return err
+	}
+	var admins []auth.User
+	if err := tx.Where("tenant_id = ? AND role = ?", t.Tenant.ID, auth.RoleAdmin).Find(&admins).Error; err != nil {
+		return err
+	}
+	if len(admins) > 1 || (len(admins) == 1 && admins[0].Email != t.Tenant.Admin.Email) {
+		return errs.Conflict("tenant already has a different Admin")
+	}
+	if _, err := provisionUser(tx, t.Tenant.ID, t.Tenant.Admin, auth.RoleAdmin, t.AdminHash); err != nil {
+		return err
+	}
+	login, err := provisionUser(tx, t.Tenant.ID, t.Tenant.Employee, auth.RoleEmployee, t.EmployeeHash)
+	if err != nil {
+		return err
+	}
+	e, err := initialEmployee(tx, t, login.ID)
+	if err != nil {
+		return err
+	}
+	return chat.ProvisionConversation(tx, t.Tenant.ID, e.ID)
+}
+
+// initialEmployee returns the tenant's first Employee, creating it only in an empty tenant.
+func initialEmployee(tx *gorm.DB, t PreparedTenant, loginID string) (employee.Employee, error) {
+	var e employee.Employee
+	err := tx.Unscoped().Where("LOWER(email) = ?", t.Tenant.Employee.Email).First(&e).Error
+	if err == nil {
+		if e.TenantID != t.Tenant.ID || e.UserID == nil || *e.UserID != loginID || e.DeletedAt.Valid {
+			return e, errs.Conflict("initial Employee does not match; reset first")
+		}
+		return e, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return e, err
+	}
+	var count int64
+	if err := tx.Unscoped().Model(&employee.Employee{}).Where("tenant_id = ?", t.Tenant.ID).Count(&count).Error; err != nil {
+		return e, err
+	}
+	if count != 0 {
+		return e, errs.Conflict("tenant has Employees but its initial Employee is missing; reset first")
+	}
+	var department employee.Department
+	if err := tx.Where("name = ?", t.DepartmentName).First(&department).Error; err != nil {
+		return e, err
+	}
+	e = t.EmployeeProfile
+	e.UserID = &loginID
+	e.DepartmentID = &department.ID
+	return e, tx.Create(&e).Error
 }
 
 func provisionUser(tx *gorm.DB, tenantID string, a Account, role auth.Role, hash string) (*auth.User, error) {
