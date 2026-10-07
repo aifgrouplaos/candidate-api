@@ -43,45 +43,30 @@ func main() {
 
 func run() error {
 	ctx := context.Background()
-	provision := flag.String("assessment-provision", "", "provision candidate tenants from a local JSON manifest; do not start HTTP")
-	reset := flag.String("assessment-reset", "", "reset one tenant UUID while all API replicas are stopped; do not start HTTP")
-	flag.Parse()
-	if flag.NArg() != 0 || (*provision != "" && *reset != "") {
-		return errors.New("provide one assessment operation or no arguments to start the API")
+	provision, reset, err := parseFlags()
+	if err != nil {
+		return err
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("config load failed: %w", err)
 	}
-	if *provision != "" || *reset != "" {
-		return runAssessment(ctx, cfg, *provision, *reset)
+	if provision != "" || reset != "" {
+		return runAssessment(ctx, cfg, provision, reset)
 	}
-	trustedProxies, err := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
+	trustedProxies, allowedOrigins, err := prepareServer(cfg)
 	if err != nil {
-		return fmt.Errorf("trusted proxy configuration invalid: %w", err)
-	}
-	allowedOrigins, err := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
-	if err != nil {
-		return fmt.Errorf("allowed origins configuration invalid: %w", err)
-	}
-
-	log := logger.Development()
-	if cfg.App.Env == "production" {
-		log = logger.Production()
-	}
-	slog.SetDefault(log)
-	if err := validateConfig(cfg, trustedProxies); err != nil {
 		return err
 	}
 
 	// Composition root: construct adapters only when enabled, hold them as ports.
 	var (
-		db         contract.ORM
-		cache      contract.Cache
-		redisCache *redis.Cache
-		store      contract.Storage
-		token      contract.Token
+		db      contract.ORM
+		cache   contract.Cache
+		store   contract.Storage
+		token   contract.Token
+		limiter ratelimit.Store
 	)
 
 	if cfg.PostgresEnabled {
@@ -94,12 +79,13 @@ func run() error {
 	}
 
 	if cfg.RedisEnabled {
-		redisCache, err = redis.New(ctx, cfg.Redis)
+		redisCache, err := redis.New(ctx, cfg.Redis)
 		if err != nil {
 			return fmt.Errorf("redis connect failed: %w", err)
 		}
 		cache = redisCache
 		defer cache.Close()
+		limiter = ratelimit.NewRedisStore(redisCache.Client())
 	}
 
 	if cfg.MinIOEnabled {
@@ -111,11 +97,6 @@ func run() error {
 
 	if cfg.JWTEnabled {
 		token = jwt.New(cfg.JWT)
-	}
-
-	var limiter ratelimit.Store
-	if redisCache != nil {
-		limiter = ratelimit.NewRedisStore(redisCache.Client())
 	}
 
 	app := newApp(cfg, trustedProxies, allowedOrigins, db, limiter, token, store)
@@ -131,6 +112,38 @@ func run() error {
 		"jwt", cfg.JWTEnabled,
 	)
 	return app.Listen(":" + cfg.App.Port)
+}
+
+func parseFlags() (provision, reset string, err error) {
+	flag.StringVar(&provision, "assessment-provision", "", "provision candidate tenants from a local JSON manifest; do not start HTTP")
+	flag.StringVar(&reset, "assessment-reset", "", "reset one tenant UUID while all API replicas are stopped; do not start HTTP")
+	flag.Parse()
+	if flag.NArg() != 0 || (provision != "" && reset != "") {
+		return "", "", errors.New("provide one assessment operation or no arguments to start the API")
+	}
+	return provision, reset, nil
+}
+
+// prepareServer reads the HTTP-only settings, installs the logger, and validates the config.
+func prepareServer(cfg *config.Config) ([]string, string, error) {
+	trustedProxies, err := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
+	if err != nil {
+		return nil, "", fmt.Errorf("trusted proxy configuration invalid: %w", err)
+	}
+	allowedOrigins, err := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
+	if err != nil {
+		return nil, "", fmt.Errorf("allowed origins configuration invalid: %w", err)
+	}
+
+	log := logger.Development()
+	if cfg.App.Env == "production" {
+		log = logger.Production()
+	}
+	slog.SetDefault(log)
+	if err := validateConfig(cfg, trustedProxies); err != nil {
+		return nil, "", err
+	}
+	return trustedProxies, allowedOrigins, nil
 }
 
 // Operator commands share the composition root, never the HTTP route tree.
