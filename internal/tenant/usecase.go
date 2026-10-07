@@ -70,14 +70,14 @@ func validateAccount(a *Account, seen map[string]bool, getenv func(string) strin
 	}
 	seen[a.Email] = true
 	if n := len([]rune(a.FullName)); n < 2 || n > 100 {
-		return "", errs.BadRequest("names must contain 2–100 characters")
+		return "", errs.BadRequest("names must contain 2-100 characters")
 	}
 	if a.PasswordEnv == "" {
 		return "", errs.BadRequest("passwordEnv is required")
 	}
 	password := getenv(a.PasswordEnv)
 	if n := len(password); n < 8 || n > 72 {
-		return "", errs.BadRequest("password environment values must contain 8–72 bytes")
+		return "", errs.BadRequest("password environment values must contain 8-72 bytes")
 	}
 	return password, nil
 }
