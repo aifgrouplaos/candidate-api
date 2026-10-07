@@ -68,6 +68,7 @@ type AuthRepository interface {
 	// EmployeeID returns nil when the user has no active Employee, as for Admins.
 	EmployeeID(ctx context.Context, userID, tenantID string) (*string, error)
 	FindUserByRefreshToken(ctx context.Context, hash string, now time.Time) (*User, *RefreshToken, error)
+	// CreateSession stores the session and refresh token, and revokes that user's other active sessions.
 	CreateSession(ctx context.Context, session *AuthSession, token *RefreshToken) error
 	RotateRefreshToken(ctx context.Context, oldHash string, expectedUser *User, replacement *RefreshToken, now time.Time) error
 	RevokeSession(ctx context.Context, hash, userID, sessionID string, now time.Time) error
