@@ -32,7 +32,7 @@ The command prompts for the Admin's email and name, then asks for a password twi
 ## Project scope
 
 For repeatable candidate setup and tenant reset, follow
-[the assessment operations runbook](docs/assessment-operations.md).
+[the tenant operations runbook](docs/tenant-operations.md).
 The operator commands run from `cmd/api` and expose no HTTP reset endpoint.
 
 | Exercise | Capability | Main requirements |

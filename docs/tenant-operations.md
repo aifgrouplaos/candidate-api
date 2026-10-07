@@ -11,7 +11,7 @@ the repository root with the same database and bucket settings as the API.
    `DB_ENABLED=true`, `MINIO_ENABLED=true`, and configure the private bucket.
    Enable JWT for candidate login (`JWT_ENABLED=true` and a signing secret of
    at least 32 bytes). Explicit `APP_ENV=development` skips rate limits locally.
-2. Copy `assessment.example.json` to ignored `assessment.local.json`.
+2. Copy `tenants.example.json` to ignored `tenants.local.json`.
    The example contains **10 candidates = 10 isolated tenants**, each with its own
    Admin and initial Employee login (20 accounts total). Manifests accept 1–100
    tenants. Choose a distinct canonical, nonzero UUID per candidate and globally
@@ -25,16 +25,16 @@ the repository root with the same database and bucket settings as the API.
    This is a maintenance operation: concurrent requests, avatar uploads, or login
    could otherwise race with cleanup. Stopping replicas also drops all WebSocket
    connections, one-use tickets, presence, and typing state held in memory.
-4. Provision:
+4. Set up tenants:
 
    ```sh
-   go run ./cmd/api -assessment-provision assessment.local.json
+   go run ./cmd/api -tenant-setup tenants.local.json
    ```
 
-Provision creates all manifest tenants atomically, with one active Admin and one active,
+Setup creates all manifest tenants atomically, with one active Admin and one active,
 login-enabled Employee each. Each Employee starts with code `EMP-0001`, the IT
 department, and its Admin conversation. Repeating setup preserves existing account
-IDs, profiles, passwords, and assessment work; an email in another tenant, an
+IDs, profiles, passwords, and candidate work; an email in another tenant, an
 inactive account, a different Admin, or a Deleted initial Employee causes a
 conflict without partial account creation. Reset first to replace a Deleted
 Employee. Repeating setup is not a password rotation mechanism.
@@ -51,7 +51,7 @@ Stop **every** API replica, verify the selected database/bucket and the tenant I
 against the manifest, then run:
 
 ```sh
-go run ./cmd/api -assessment-reset 10000000-0000-4000-8000-000000000001
+go run ./cmd/api -tenant-reset 10000000-0000-4000-8000-000000000001
 ```
 
 Reset requires configured private storage even if the tenant has no recorded
@@ -75,7 +75,7 @@ or legal holds can prevent deletion; resolve those operator settings before retr
 Reset removes persisted avatar objects; previously downloaded client copies
 cannot be revoked.
 
-To reuse a tenant, run the provisioning manifest again. It recreates
+To reuse a tenant, run tenant setup with the manifest again. It recreates
 the missing initial Employee and conversation while preserving the other tenant's
 accounts and data. The retained Admin needs to sign in again. Restart API replicas
 only after reset/setup succeeds.
@@ -90,16 +90,16 @@ go test ./internal/tenant -count=1 -v
 ```
 
 The tests verify ten-candidate setup creates ten tenants and twenty active accounts
-without duplicating records on repetition. They also provision twice, preserve
+without duplicating records on repetition. They also run setup twice, preserve
 IDs/password hashes, populate two tenants
 with sessions, messages and nested Projects, include a Deleted Employee, reset
 one tenant twice, and verify that the other tenant and shared departments remain.
 They also cover invalid/unknown tenants, conflicting emails and cleanup failure.
 Without `TEST_POSTGRES_DSN`, the database tests skip.
 
-For storage and candidate login verification in a disposable assessment environment:
+For storage and candidate login verification in a disposable test environment:
 
-1. Provision the manifest twice; log in as every configured account. Verify five departments,
+1. Run tenant setup twice; log in as every configured account. Verify five departments,
    task types and priorities, and each Employee's initial conversation.
 2. Upload an avatar in each tenant, send a chat message, and create a Project with a
    Phase and Task in each tenant. Keep both tenants' tokens and Project IDs.
@@ -111,7 +111,7 @@ For storage and candidate login verification in a disposable assessment environm
    including its Admin tokens. Its retained Admin can log in again and sees empty
    Employee, conversation and Project lists. Its former Employee cannot log in.
    The second tenant's existing tokens and data must still work.
-5. Stop replicas, provision again, then restart. The first tenant's initial Employee
+5. Stop replicas, run setup again, then restart. The first tenant's initial Employee
    can log in and has one empty conversation, while the second tenant is unchanged.
 
 No reset route is registered. Operator access is controlled by infrastructure

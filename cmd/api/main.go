@@ -43,7 +43,7 @@ func main() {
 
 func run() error {
 	ctx := context.Background()
-	provision, reset, err := parseFlags()
+	setup, reset, err := parseFlags()
 	if err != nil {
 		return err
 	}
@@ -52,8 +52,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("config load failed: %w", err)
 	}
-	if provision != "" || reset != "" {
-		return runTenantCommand(ctx, cfg, provision, reset)
+	if setup != "" || reset != "" {
+		return runTenantCommand(ctx, cfg, setup, reset)
 	}
 	trustedProxies, allowedOrigins, err := prepareServer(cfg)
 	if err != nil {
@@ -114,14 +114,14 @@ func run() error {
 	return app.Listen(":" + cfg.App.Port)
 }
 
-func parseFlags() (provision, reset string, err error) {
-	flag.StringVar(&provision, "assessment-provision", "", "provision candidate tenants from a local JSON manifest; do not start HTTP")
-	flag.StringVar(&reset, "assessment-reset", "", "reset one tenant UUID while all API replicas are stopped; do not start HTTP")
+func parseFlags() (setup, reset string, err error) {
+	flag.StringVar(&setup, "tenant-setup", "", "create missing candidate tenants from a local JSON manifest; do not start HTTP")
+	flag.StringVar(&reset, "tenant-reset", "", "reset one tenant UUID while all API replicas are stopped; do not start HTTP")
 	flag.Parse()
-	if flag.NArg() != 0 || (provision != "" && reset != "") {
-		return "", "", errors.New("provide one assessment operation or no arguments to start the API")
+	if flag.NArg() != 0 || (setup != "" && reset != "") {
+		return "", "", errors.New("provide one tenant command or no arguments to start the API")
 	}
-	return provision, reset, nil
+	return setup, reset, nil
 }
 
 // prepareServer reads the HTTP-only settings, installs the logger, and validates the config.
@@ -149,7 +149,7 @@ func prepareServer(cfg *config.Config) ([]string, string, error) {
 // Operator commands share the composition root, never the HTTP route tree.
 func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantID string) error {
 	if !cfg.PostgresEnabled {
-		return errors.New("assessment operations require DB_ENABLED=true")
+		return errors.New("tenant commands require DB_ENABLED=true")
 	}
 	if tenantID != "" && !cfg.MinIOEnabled {
 		return errors.New("reset requires MINIO_ENABLED=true to remove all tenant avatars")
@@ -184,7 +184,7 @@ func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantI
 	if err := uc.SetupTenants(ctx, tenants, os.Getenv); err != nil {
 		return err
 	}
-	fmt.Printf("Provisioned %d candidate tenants; existing account credentials unchanged.\n", len(tenants))
+	fmt.Printf("Set up %d candidate tenants; existing account credentials unchanged.\n", len(tenants))
 	return nil
 }
 
@@ -212,17 +212,17 @@ func removeTenantAvatars(client *miniogo.Client, bucket string) tenant.CleanupAv
 func readManifest(path string) ([]tenant.Tenant, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, errors.New("cannot open assessment manifest")
+		return nil, errors.New("cannot open tenant manifest")
 	}
 	defer file.Close()
 	decoder := json.NewDecoder(io.LimitReader(file, 64*1024))
 	decoder.DisallowUnknownFields()
 	var tenants []tenant.Tenant
 	if err := decoder.Decode(&tenants); err != nil {
-		return nil, errors.New("invalid assessment JSON manifest")
+		return nil, errors.New("invalid tenant JSON manifest")
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return nil, errors.New("assessment manifest must contain one JSON array")
+		return nil, errors.New("tenant manifest must contain one JSON array")
 	}
 	return tenants, nil
 }

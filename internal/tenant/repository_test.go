@@ -47,29 +47,29 @@ func tenantDB(t *testing.T) *gormadapter.DB {
 	return db
 }
 
-func TestProvisionAndResetIsolationAgainstPostgres(t *testing.T) {
+func TestSetupAndResetIsolationAgainstPostgres(t *testing.T) {
 	db := tenantDB(t)
 	ctx := context.Background()
 	repo := tenant.NewTenantRepository(db)
 	var cleaned []string
 	uc := tenant.NewTenantUsecase(repo, func(_ context.Context, id string) error { cleaned = append(cleaned, id); return nil })
 	ts := tenants()
-	provision := func() {
+	setup := func() {
 		t.Helper()
 		if err := uc.SetupTenants(ctx, ts, func(string) string { return "test-only-password" }); err != nil {
 			t.Fatal(err)
 		}
 	}
-	provision()
-	provision()
+	setup()
+	setup()
 	// Stable identity and unchanged password hashes across repeated setup.
 	hashes := userHashes(t, db.Raw())
 	if len(hashes) != 4 {
 		t.Fatalf("users=%d", len(hashes))
 	}
-	provision()
+	setup()
 	if !maps.Equal(hashes, userHashes(t, db.Raw())) {
-		t.Fatal("repeat provision changed a password")
+		t.Fatal("repeat setup changed a password")
 	}
 	for i, candidate := range ts {
 		seedTenantActivity(t, db.Raw(), i, candidate.ID)
@@ -98,8 +98,8 @@ func TestProvisionAndResetIsolationAgainstPostgres(t *testing.T) {
 	assertCount(t, db.Raw().Model(&auth.AuthSession{}).Where("tenant_id = ? AND revoked_at IS NULL", ts[1].ID), 2)
 	assertCount(t, db.Raw().Model(&auth.RefreshToken{}).Where("revoked_at IS NULL"), 2)
 	assertCount(t, db.Raw().Model(&employee.Department{}), 5)
-	provision()
-	provision()
+	setup()
+	setup()
 	assertCount(t, db.Raw().Model(&employee.Employee{}).Where("tenant_id = ?", ts[0].ID), 1)
 	assertCount(t, db.Raw().Model(&chat.Conversation{}).Where("tenant_id = ?", ts[0].ID), 1)
 }
@@ -134,7 +134,7 @@ func seedTenantActivity(t *testing.T, db *gorm.DB, i int, tenantID string) {
 	mustCreate(t, db, &auth.RefreshToken{UserID: admin.ID, SessionID: adminSession.ID, TokenHash: fmt.Sprintf("admin-token-%d", i), ExpiresAt: time.Now().Add(time.Hour)})
 	mustCreate(t, db, &chat.Message{ConversationID: c.ID, SenderID: *e.UserID, Sequence: 1, ClientMessageID: "one", Text: "hello"})
 	now := time.Now()
-	p := project.Project{TenantID: tenantID, Code: "ASSESSMENT", IdempotencyKey: "one", RequestHash: "hash", Name: "Assessment", OwnerID: e.ID, StartDate: now, EndDate: now, Phases: []project.Phase{{Name: "Phase", StartDate: now, EndDate: now, Tasks: []project.Task{{Title: "Task", Type: project.TaskFeature, Priority: project.PriorityLow, AssigneeID: e.ID, EstimateHours: 1, DueDate: now}}}}}
+	p := project.Project{TenantID: tenantID, Code: "SAMPLE", IdempotencyKey: "one", RequestHash: "hash", Name: "Sample", OwnerID: e.ID, StartDate: now, EndDate: now, Phases: []project.Phase{{Name: "Phase", StartDate: now, EndDate: now, Tasks: []project.Task{{Title: "Task", Type: project.TaskFeature, Priority: project.PriorityLow, AssigneeID: e.ID, EstimateHours: 1, DueDate: now}}}}}
 	mustCreate(t, db, &p)
 }
 
@@ -162,7 +162,7 @@ func assertCount(t *testing.T, query *gorm.DB, want int64) {
 	}
 }
 
-func TestProvisionConflictRollsBackBothTenants(t *testing.T) {
+func TestSetupConflictRollsBackBothTenants(t *testing.T) {
 	db := tenantDB(t)
 	ctx := context.Background()
 	ts := tenants()
@@ -194,7 +194,7 @@ func TestUnknownTenantResetDoesNotTouchStorage(t *testing.T) {
 	}
 }
 
-func TestProvisionTenCandidateTenantsAgainstPostgres(t *testing.T) {
+func TestSetupTenCandidateTenantsAgainstPostgres(t *testing.T) {
 	db := tenantDB(t)
 	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), nil)
 	for range 2 {

@@ -10,13 +10,13 @@ import (
 )
 
 type repository struct {
-	provision func([]tenant.PreparedTenant) error
-	revoke    func(string) error
-	clear     func(string) error
+	setup  func([]tenant.PreparedTenant) error
+	revoke func(string) error
+	clear  func(string) error
 }
 
 func (r repository) SetupTenants(_ context.Context, tenants []tenant.PreparedTenant) error {
-	return r.provision(tenants)
+	return r.setup(tenants)
 }
 func (r repository) Revoke(_ context.Context, id string) error { return r.revoke(id) }
 func (r repository) Clear(_ context.Context, id string) error  { return r.clear(id) }
@@ -60,10 +60,10 @@ func tenCandidates() []tenant.Tenant {
 	return result
 }
 
-func TestProvisionTenCandidates(t *testing.T) {
+func TestSetupTenCandidates(t *testing.T) {
 	var prepared []tenant.PreparedTenant
 	manifest := tenCandidates()
-	uc := tenant.NewTenantUsecase(repository{provision: func(ts []tenant.PreparedTenant) error { prepared = ts; return nil }}, nil)
+	uc := tenant.NewTenantUsecase(repository{setup: func(ts []tenant.PreparedTenant) error { prepared = ts; return nil }}, nil)
 	if err := uc.SetupTenants(context.Background(), manifest, func(string) string { return "test-only-password" }); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestProvisionTenCandidates(t *testing.T) {
 	}
 }
 
-func TestProvisionRejectsEmptyOrOversizedManifest(t *testing.T) {
+func TestSetupRejectsEmptyOrOversizedManifest(t *testing.T) {
 	uc := tenant.NewTenantUsecase(repository{}, nil)
 	for _, manifest := range [][]tenant.Tenant{nil, make([]tenant.Tenant, 101)} {
 		if err := uc.SetupTenants(context.Background(), manifest, func(string) string { t.Fatal("invalid manifest read passwords"); return "" }); err == nil {
@@ -86,9 +86,9 @@ func TestProvisionRejectsEmptyOrOversizedManifest(t *testing.T) {
 	}
 }
 
-func TestProvisionValidatesAllAccountsBeforePersistence(t *testing.T) {
+func TestSetupValidatesAllAccountsBeforePersistence(t *testing.T) {
 	called := false
-	uc := tenant.NewTenantUsecase(repository{provision: func([]tenant.PreparedTenant) error { called = true; return nil }}, nil)
+	uc := tenant.NewTenantUsecase(repository{setup: func([]tenant.PreparedTenant) error { called = true; return nil }}, nil)
 	for _, mutate := range []func([]tenant.Tenant){
 		func(ts []tenant.Tenant) { ts[1].ID = ts[0].ID },
 		func(ts []tenant.Tenant) { ts[1].Employee.Email = ts[0].Admin.Email },

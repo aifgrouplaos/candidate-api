@@ -1,5 +1,5 @@
 .env
-assessment.local.json
+tenants.local.json
 bin/
 *.exe
 *.out
