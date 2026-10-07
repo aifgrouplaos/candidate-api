@@ -85,6 +85,9 @@ func run(input io.Reader, output io.Writer) error {
 		return errors.New("PostgreSQL is disabled; set DB_ENABLED=true")
 	}
 
+	if os.Getenv("DB_PGBOUNCER") == "true" {
+		cfg.Postgres.DSN += " default_query_exec_mode=simple_protocol"
+	}
 	db, err := gormadapter.New(cfg.Postgres)
 	if err != nil {
 		return fmt.Errorf("postgres connect failed: %w", err)
