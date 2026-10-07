@@ -169,6 +169,16 @@ func TestProvisionConflictRollsBackBothTenants(t *testing.T) {
 	assertCount(t, db.Raw().Model(&chat.Conversation{}), 0)
 }
 
+func TestDatabaseRejectsSecondAdminInTenant(t *testing.T) {
+	db := tenantDB(t)
+	id := tenants()[0].ID
+	mustCreate(t, db.Raw(), &auth.User{TenantID: id, Email: "first@example.test", FullName: "First", Role: auth.RoleAdmin, PasswordHash: "x", Active: true})
+	mustCreate(t, db.Raw(), &auth.User{TenantID: id, Email: "employee@example.test", FullName: "Employee", Role: auth.RoleEmployee, PasswordHash: "x", Active: true})
+	if err := db.Raw().Create(&auth.User{TenantID: id, Email: "second@example.test", FullName: "Second", Role: auth.RoleAdmin, PasswordHash: "x", Active: true}).Error; err == nil {
+		t.Fatal("accepted a second Admin in one tenant")
+	}
+}
+
 func TestUnknownTenantResetDoesNotTouchStorage(t *testing.T) {
 	db := tenantDB(t)
 	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), func(context.Context, string) error { t.Fatal("unknown tenant reached storage"); return nil })

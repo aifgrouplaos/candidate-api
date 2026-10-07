@@ -23,7 +23,7 @@ const (
 
 type User struct {
 	ID           string    `json:"id" gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	TenantID     string    `json:"tenantId" gorm:"type:uuid;not null;index"`
+	TenantID     string    `json:"tenantId" gorm:"type:uuid;not null;index;uniqueIndex:idx_users_tenant_admin,where:role = 'admin'"`
 	Email        string    `json:"email" gorm:"not null;uniqueIndex:idx_users_email_lower,expression:LOWER(email)"`
 	PasswordHash string    `json:"-" gorm:"not null"`
 	Role         Role      `json:"role" gorm:"not null"`
