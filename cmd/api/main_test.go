@@ -153,6 +153,37 @@ func TestProductionRequiresObjectStorage(t *testing.T) {
 	}
 }
 
+func TestCORSPreflightAllowsOnlyConfiguredOrigins(t *testing.T) {
+	app := newApp(&config.Config{}, nil, defaultAllowedOrigins, nil, nil, nil, nil)
+	for origin, allowed := range map[string]bool{
+		"http://localhost:3000": true,
+		"http://localhost:5173": true,
+		"https://evil.example":  false,
+	} {
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/projects", nil)
+		req.Header.Set("Origin", origin)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+		req.Header.Set("Access-Control-Request-Headers", "authorization,content-type,idempotency-key")
+		res, err := app.Test(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if got := res.Header.Get("Access-Control-Allow-Origin"); (got == origin) != allowed {
+			t.Errorf("%s: Access-Control-Allow-Origin = %q, allowed = %v", origin, got, allowed)
+		}
+		if !allowed {
+			continue
+		}
+		headers := strings.ToLower(res.Header.Get("Access-Control-Allow-Headers"))
+		for _, h := range []string{"authorization", "content-type", "idempotency-key"} {
+			if !strings.Contains(headers, h) {
+				t.Errorf("%s: Access-Control-Allow-Headers %q lacks %s", origin, headers, h)
+			}
+		}
+	}
+}
+
 func TestParseAllowedOrigins(t *testing.T) {
 	for value, want := range map[string]string{
 		"":    defaultAllowedOrigins,
