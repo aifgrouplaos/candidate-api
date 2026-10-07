@@ -26,27 +26,7 @@ import (
 // candidate flow for the first two manifest tenants, then a reset of the first tenant
 // with isolation checks. It deletes tenant data, so it only runs through `make e2e`.
 func TestE2E(t *testing.T) {
-	if os.Getenv("E2E") != "1" {
-		t.Skip("set E2E=1 (make e2e) to run against a local stack")
-	}
-	local := func(host string) bool {
-		return host == "localhost" || host == "127.0.0.1" || strings.HasPrefix(host, "localhost:") || strings.HasPrefix(host, "127.0.0.1:")
-	}
-	if os.Getenv("APP_ENV") != "development" || !local(os.Getenv("DB_HOST")) || !local(os.Getenv("MINIO_ENDPOINT")) {
-		t.Fatal("refusing: E2E resets a tenant, so it needs APP_ENV=development and local DB_HOST and MINIO_ENDPOINT")
-	}
-	if os.Getenv("APP_PORT") == "" {
-		t.Fatal("APP_PORT is required")
-	}
-	allowed, err := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	origin = strings.Split(allowed, ",")[0]
-	tenants, err := readManifest(os.Getenv("E2E_MANIFEST"))
-	if err != nil || len(tenants) < 2 {
-		t.Fatalf("E2E_MANIFEST needs at least two tenants: %v", err)
-	}
+	tenants := requireLocalE2E(t)
 	// The API runs outside the repository so it reads only this process's environment, never .env.
 	root := t.TempDir()
 	bin := filepath.Join(t.TempDir(), "candidate-api")
@@ -75,7 +55,40 @@ func TestE2E(t *testing.T) {
 	operator("-tenant-reset", first.tenantID)
 	operator("-tenant-setup", manifest)
 	startAPI(t, bin, root, base)
+	assertReset(t, base, first)
+	assertUntouched(t, first, second)
+}
 
+// requireLocalE2E skips unless E2E=1, refuses non-local stacks, and returns the manifest tenants.
+func requireLocalE2E(t *testing.T) []tenant.Tenant {
+	t.Helper()
+	if os.Getenv("E2E") != "1" {
+		t.Skip("set E2E=1 (make e2e) to run against a local stack")
+	}
+	local := func(host string) bool {
+		return host == "localhost" || host == "127.0.0.1" || strings.HasPrefix(host, "localhost:") || strings.HasPrefix(host, "127.0.0.1:")
+	}
+	if os.Getenv("APP_ENV") != "development" || !local(os.Getenv("DB_HOST")) || !local(os.Getenv("MINIO_ENDPOINT")) {
+		t.Fatal("refusing: E2E resets a tenant, so it needs APP_ENV=development and local DB_HOST and MINIO_ENDPOINT")
+	}
+	if os.Getenv("APP_PORT") == "" {
+		t.Fatal("APP_PORT is required")
+	}
+	allowed, err := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin = strings.Split(allowed, ",")[0]
+	tenants, err := readManifest(os.Getenv("E2E_MANIFEST"))
+	if err != nil || len(tenants) < 2 {
+		t.Fatalf("E2E_MANIFEST needs at least two tenants: %v", err)
+	}
+	return tenants
+}
+
+// assertReset checks that the reset and re-setup tenant kept only its Admin and initial Employee.
+func assertReset(t *testing.T, base string, first tenantRun) {
+	t.Helper()
 	for _, token := range []string{first.admin.token, first.employee.token} {
 		first.admin.with(token).call("GET", "/auth/me", nil, 401, nil)
 	}
@@ -98,10 +111,14 @@ func TestE2E(t *testing.T) {
 	if len(conversations) != 1 || conversations[0].LastMessage != nil {
 		t.Errorf("after reset, initial Employee conversations = %+v, want one empty", conversations)
 	}
-
 	if status := download(t, first.avatar); status != 404 {
 		t.Errorf("reset tenant's avatar download status = %d, want 404", status)
 	}
+}
+
+// assertUntouched checks that resetting first left second's data and tokens working, then removes it.
+func assertUntouched(t *testing.T, first, second tenantRun) {
+	t.Helper()
 	if status := download(t, second.avatar); status != 200 {
 		t.Errorf("other tenant's avatar download status = %d, want 200", status)
 	}
