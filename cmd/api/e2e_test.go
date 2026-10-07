@@ -56,7 +56,7 @@ func TestE2E(t *testing.T) {
 	operator("-tenant-setup", manifest)
 	startAPI(t, bin, root, base)
 	assertReset(t, base, first)
-	assertUntouched(t, first, second)
+	assertUntouched(t, second)
 }
 
 // requireLocalE2E skips unless E2E=1, refuses non-local stacks, and returns the manifest tenants.
@@ -116,8 +116,8 @@ func assertReset(t *testing.T, base string, first tenantRun) {
 	}
 }
 
-// assertUntouched checks that resetting first left second's data and tokens working, then removes it.
-func assertUntouched(t *testing.T, first, second tenantRun) {
+// assertUntouched checks that another tenant's reset left second's data and tokens working, then removes its test data.
+func assertUntouched(t *testing.T, second tenantRun) {
 	t.Helper()
 	if status := download(t, second.avatar); status != 200 {
 		t.Errorf("other tenant's avatar download status = %d, want 200", status)
