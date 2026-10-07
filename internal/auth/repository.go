@@ -13,6 +13,9 @@ import (
 
 const whereActiveID = "id = ? AND revoked_at IS NULL"
 
+// deadRetention keeps revoked and expired sessions and refresh tokens for audit.
+const deadRetention = 7 * 24 * time.Hour
+
 type authRepository struct{ db contract.ORM }
 
 func NewAuthRepository(db contract.ORM) AuthRepository { return &authRepository{db: db} }
@@ -48,6 +51,25 @@ func (r *authRepository) EmployeeID(ctx context.Context, userID, tenantID string
 
 func (r *authRepository) CreateSession(ctx context.Context, session *AuthSession, token *RefreshToken) error {
 	return r.db.Transaction(ctx, func(tx *gorm.DB) error {
+		// ponytail: two logins committing together can both stay active; a partial unique
+		// index on user_id WHERE revoked_at IS NULL would close that.
+		now := time.Now().UTC()
+		// ponytail: pruning runs only at login, so a user who never returns keeps dead
+		// rows until tenant reset; retention is a minimum, not a maximum.
+		cutoff := now.Add(-deadRetention)
+		if err := tx.Where("user_id = ? AND (revoked_at < ? OR expires_at < ?)", session.UserID, cutoff, cutoff).
+			Delete(&RefreshToken{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ? AND (revoked_at < ? OR NOT EXISTS (SELECT 1 FROM refresh_tokens WHERE refresh_tokens.session_id = auth_sessions.id))", session.UserID, cutoff).
+			Delete(&AuthSession{}).Error; err != nil {
+			return err
+		}
+		for _, row := range []any{&AuthSession{}, &RefreshToken{}} {
+			if err := tx.Model(row).Where("user_id = ? AND revoked_at IS NULL", session.UserID).Update("revoked_at", now).Error; err != nil {
+				return err
+			}
+		}
 		token.UserID = session.UserID
 		token.SessionID = session.ID
 		if err := tx.Create(session).Error; err != nil {

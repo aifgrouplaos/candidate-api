@@ -54,6 +54,17 @@ func (r *memoryAuthRepository) FindUserByRefreshToken(_ context.Context, hash st
 }
 
 func (r *memoryAuthRepository) CreateSession(_ context.Context, session *AuthSession, token *RefreshToken) error {
+	now := time.Now().UTC()
+	for _, existing := range r.sessions {
+		if existing.UserID == session.UserID && existing.RevokedAt == nil {
+			existing.RevokedAt = &now
+		}
+	}
+	for _, existing := range r.tokens {
+		if existing.UserID == session.UserID && existing.RevokedAt == nil {
+			existing.RevokedAt = &now
+		}
+	}
 	r.sessions[session.ID] = session
 	token.UserID, token.SessionID = session.UserID, session.ID
 	r.tokens[token.TokenHash] = token
@@ -151,6 +162,48 @@ func TestLoginRotateAndLogout(t *testing.T) {
 	}
 	if _, err := uc.Refresh(context.Background(), RefreshInput{RefreshToken: refreshed.RefreshToken}); err == nil {
 		t.Fatal("logged-out refresh token was accepted")
+	}
+}
+
+func TestLoginRevokesPreviousSessions(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("password-123"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := &memoryAuthRepository{
+		user:   &User{ID: "user-1", TenantID: "tenant-1", Email: "admin@example.test", PasswordHash: string(hash), Role: RoleAdmin, Active: true},
+		tokens: make(map[string]*RefreshToken), sessions: make(map[string]*AuthSession),
+	}
+	tokens := jwt.New(config.JWT{Secret: "test-secret"})
+	uc := NewAuthUsecase(repo, tokens)
+
+	first, err := uc.Login(context.Background(), Credentials{Email: "admin@example.test", Password: "password-123"})
+	if err != nil {
+		t.Fatalf("first login: %v", err)
+	}
+	other := &AuthSession{ID: "other-session", UserID: "user-2", TenantID: "tenant-1"}
+	repo.sessions[other.ID] = other
+	repo.tokens["other-hash"] = &RefreshToken{UserID: "user-2", SessionID: other.ID, TokenHash: "other-hash", ExpiresAt: time.Now().Add(time.Hour)}
+
+	second, err := uc.Login(context.Background(), Credentials{Email: "admin@example.test", Password: "password-123"})
+	if err != nil {
+		t.Fatalf("second login: %v", err)
+	}
+	firstClaims, err := tokens.Verify(first.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo.sessions[firstClaims["sid"].(string)].RevokedAt == nil {
+		t.Fatal("previous session stayed active")
+	}
+	if _, err := uc.Refresh(context.Background(), RefreshInput{RefreshToken: first.RefreshToken}); err == nil {
+		t.Fatal("previous login's refresh token was still accepted")
+	}
+	if _, err := uc.Refresh(context.Background(), RefreshInput{RefreshToken: second.RefreshToken}); err != nil {
+		t.Fatalf("new session refresh: %v", err)
+	}
+	if other.RevokedAt != nil || repo.tokens["other-hash"].RevokedAt != nil {
+		t.Fatal("another user's session was revoked")
 	}
 }
 
