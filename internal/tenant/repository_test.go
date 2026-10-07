@@ -78,12 +78,13 @@ func TestSetupAndResetIsolationAgainstPostgres(t *testing.T) {
 	if err := db.Raw().Where("tenant_id = ?", ts[0].ID).Delete(&employee.Employee{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
-		if err := uc.Reset(ctx, ts[0].ID); err != nil {
-			t.Fatal(err)
-		}
+	if err := uc.Reset(ctx, ts[0].ID); err != nil {
+		t.Fatal(err)
 	}
-	if len(cleaned) != 2 || cleaned[0] != ts[0].ID || cleaned[1] != ts[0].ID {
+	if err := uc.Reset(ctx, ts[0].ID); err == nil {
+		t.Fatal("reset a tenant whose Admin was already deleted")
+	}
+	if len(cleaned) != 1 || cleaned[0] != ts[0].ID {
 		t.Fatalf("cleanup=%v", cleaned)
 	}
 	for _, table := range []string{"employees", "conversations", "projects"} {
@@ -93,8 +94,8 @@ func TestSetupAndResetIsolationAgainstPostgres(t *testing.T) {
 	for _, table := range []string{"messages", "project_phases", "project_tasks"} {
 		assertCount(t, db.Raw().Table(table), 1)
 	}
-	assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ?", ts[0].ID), 1)
-	assertCount(t, db.Raw().Model(&auth.AuthSession{}).Where("tenant_id = ? AND revoked_at IS NULL", ts[0].ID), 0)
+	assertCount(t, db.Raw().Model(&auth.User{}).Where("tenant_id = ?", ts[0].ID), 0)
+	assertCount(t, db.Raw().Model(&auth.AuthSession{}).Where("tenant_id = ?", ts[0].ID), 0)
 	assertCount(t, db.Raw().Model(&auth.AuthSession{}).Where("tenant_id = ? AND revoked_at IS NULL", ts[1].ID), 2)
 	assertCount(t, db.Raw().Model(&auth.RefreshToken{}).Where("revoked_at IS NULL"), 2)
 	assertCount(t, db.Raw().Model(&employee.Department{}), 5)
@@ -191,6 +192,20 @@ func TestUnknownTenantResetDoesNotTouchStorage(t *testing.T) {
 	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), func(context.Context, string) error { t.Fatal("unknown tenant reached storage"); return nil })
 	if err := uc.Reset(context.Background(), tenants()[0].ID); err == nil {
 		t.Fatal("accepted unknown tenant")
+	}
+}
+
+func TestClearAllEmptiesEveryTableAgainstPostgres(t *testing.T) {
+	db := tenantDB(t)
+	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), func(context.Context, string) error { return nil })
+	if err := uc.SetupTenants(context.Background(), tenants(), func(string) string { return "test-only-password" }); err != nil {
+		t.Fatal(err)
+	}
+	if err := uc.ClearAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"users", "employees", "conversations", "departments"} {
+		assertCount(t, db.Raw().Table(table), 0)
 	}
 }
 

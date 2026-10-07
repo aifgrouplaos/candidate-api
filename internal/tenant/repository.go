@@ -137,9 +137,9 @@ func (r *tenantRepository) Clear(ctx context.Context, tenantID string) error {
 			"DELETE FROM project_phases WHERE project_id IN (SELECT id FROM projects WHERE tenant_id = ?)",
 			"DELETE FROM projects WHERE tenant_id = ?",
 			"DELETE FROM employees WHERE tenant_id = ?",
-			"DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ? AND role = 'employee')",
-			"DELETE FROM auth_sessions WHERE tenant_id = ? AND user_id IN (SELECT id FROM users WHERE role = 'employee')",
-			"DELETE FROM users WHERE tenant_id = ? AND role = 'employee'",
+			"DELETE FROM refresh_tokens WHERE user_id IN (SELECT id FROM users WHERE tenant_id = ?)",
+			"DELETE FROM auth_sessions WHERE tenant_id = ?",
+			"DELETE FROM users WHERE tenant_id = ?",
 		}
 		for _, sql := range statements {
 			if err := tx.Exec(sql, tenantID).Error; err != nil {
@@ -148,4 +148,21 @@ func (r *tenantRepository) Clear(ctx context.Context, tenantID string) error {
 		}
 		return nil
 	})
+}
+
+func (r *tenantRepository) AdminEmail(ctx context.Context, tenantID string) (string, error) {
+	var admins []auth.User
+	if err := r.db.Session(ctx).Where("tenant_id = ? AND role = ?", tenantID, auth.RoleAdmin).Find(&admins).Error; err != nil {
+		return "", err
+	}
+	if len(admins) != 1 {
+		return "", errs.NotFound("candidate tenant must have exactly one Admin")
+	}
+	return admins[0].Email, nil
+}
+
+func (r *tenantRepository) ClearAll(ctx context.Context) error {
+	return r.db.Session(ctx).Exec(`DO $$ DECLARE tables text; BEGIN
+SELECT string_agg(format('%I.%I', schemaname, tablename), ', ') INTO tables FROM pg_tables WHERE schemaname = current_schema();
+IF tables IS NOT NULL THEN EXECUTE 'TRUNCATE ' || tables || ' RESTART IDENTITY CASCADE'; END IF; END $$;`).Error
 }

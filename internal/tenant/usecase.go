@@ -119,6 +119,29 @@ func (u *TenantUsecase) Reset(ctx context.Context, tenantID string) error {
 	return u.repo.Clear(ctx, tenantID)
 }
 
+// AdminEmail identifies the tenant for operator confirmation before Reset.
+func (u *TenantUsecase) AdminEmail(ctx context.Context, tenantID string) (string, error) {
+	if err := validTenantID(tenantID); err != nil {
+		return "", err
+	}
+	return u.repo.AdminEmail(ctx, tenantID)
+}
+
+// ClearAll requires stopped API replicas. Database rows go first so access ends
+// even if storage cleanup fails; rerunning retries the cleanup.
+func (u *TenantUsecase) ClearAll(ctx context.Context) error {
+	if u.cleanup == nil {
+		return errs.BadRequest("private avatar storage is required for clear")
+	}
+	if err := u.repo.ClearAll(ctx); err != nil {
+		return err
+	}
+	if err := u.cleanup(ctx, ""); err != nil {
+		return fmt.Errorf("database cleared but avatar cleanup failed; retry db-clear: %w", err)
+	}
+	return nil
+}
+
 func validTenantID(id string) error {
 	parsed, err := uuid.Parse(id)
 	if err != nil || parsed == uuid.Nil || parsed.String() != id {

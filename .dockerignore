@@ -4,5 +4,6 @@
 .env.*
 tenants.*.json
 bin/
+backups/
 tools/
 *.pdf

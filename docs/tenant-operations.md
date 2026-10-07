@@ -59,9 +59,11 @@ printed by setup for that Admin, then run:
 go run ./cmd/api -tenant-reset 10000000-0000-4000-8000-000000000001
 ```
 
-Or run `make tenant-reset TENANT=<tenant UUID>`.
+Or run `make tenant-reset TENANT=<tenant UUID>`. Add `ENV_FILE=.env.production`
+to target production.
 
-Reset requires configured private storage even if the tenant has no recorded
+Reset prints the tenant's Admin email and requires typing it to confirm.
+It requires configured private storage even if the tenant has no recorded
 avatars. It requires exactly one existing Admin in the selected tenant. It:
 
 1. Revokes all tenant sessions and refresh tokens, including the Admin's.
@@ -70,22 +72,43 @@ avatars. It requires exactly one existing Admin in the selected tenant. It:
    versions, and delete markers. Storage credentials must allow listing versions
    and deleting versions as well as ordinary objects.
 3. In one database transaction, permanently removes tenant messages, conversations,
-   Projects, Phases, Tasks, Employees (including Deleted Employees), and Employee
-   login/session/token rows. The Admin account and its credentials remain; revoked
-   Admin sessions remain revoked. Shared lookups and other tenants stay intact.
+   Projects, Phases, Tasks, Employees (including Deleted Employees), and every
+   login, session, and token row of the tenant, including the Admin. The tenant no
+   longer exists. Shared lookups and other tenants stay intact.
 
 A storage failure stops before database deletion; sessions stay revoked and the
 records remain for retry. A database cleanup failure rolls back that cleanup.
 Already deleted objects need no restoration: keep replicas stopped and rerun the
-same reset until it succeeds. Repeated successful resets are safe. Object retention
+same reset until it succeeds. After a successful reset, the tenant ID is unknown and
+a repeated reset is rejected. Object retention
 or legal holds can prevent deletion; resolve those operator settings before retrying.
 Reset removes persisted avatar objects; previously downloaded client copies
 cannot be revoked.
 
-To reuse a tenant, run tenant setup with the manifest again. It recreates
-the missing initial Employee and conversation while preserving the other tenant's
-accounts and data. The retained Admin needs to sign in again. Restart API replicas
-only after reset/setup succeeds.
+To reuse a candidate, run tenant setup with the manifest again. It recreates the
+Admin, initial Employee, and conversation under a **new** tenant ID while preserving
+the other tenants' accounts and data. Restart API replicas only after reset/setup succeeds.
+
+## Clear the whole database
+
+Stop **every** API replica, then run:
+
+```sh
+make db-clear                                          # local docker-compose stack
+make db-clear ENV_FILE=.env.production CONFIRM=production
+```
+
+It truncates every table in the database schema and deletes every object under
+`files/avatars/` in the bucket. It asks you to type the database name, and also the
+database host when that host is not `localhost` or `127.0.0.1`. Non-local hosts are
+refused without `CONFIRM=production`, and get a `pg_dump` (through the
+`postgres:18-alpine` Docker image) into ignored `backups/` first; a failed backup
+deletes nothing. Avatars are not backed up. If avatar cleanup fails after the
+database is cleared, rerun the same command. Afterwards run `make tenant-setup`
+with the same `ENV_FILE`, which also reseeds departments, then restart the API.
+
+`.env.production` must define every key: the Go command also reads `.env` and
+uses its values for any key the selected file leaves unset.
 
 ## Repeatable verification
 

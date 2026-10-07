@@ -1,4 +1,6 @@
 .env
+.env.production
+backups/
 tenants.local.json
 bin/
 *.exe

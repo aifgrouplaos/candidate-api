@@ -15,6 +15,7 @@ type repository struct {
 	setup    func([]tenant.PreparedTenant) error
 	revoke   func(string) error
 	clear    func(string) error
+	clearAll func() error
 }
 
 func (r repository) TenantIDByAdminEmail(_ context.Context, email string) (string, error) {
@@ -25,6 +26,28 @@ func (r repository) SetupTenants(_ context.Context, tenants []tenant.PreparedTen
 }
 func (r repository) Revoke(_ context.Context, id string) error { return r.revoke(id) }
 func (r repository) Clear(_ context.Context, id string) error  { return r.clear(id) }
+func (r repository) ClearAll(context.Context) error            { return r.clearAll() }
+func (r repository) AdminEmail(context.Context, string) (string, error) {
+	return "admin1@example.test", nil
+}
+
+func TestClearAllClearsDatabaseThenEveryAvatar(t *testing.T) {
+	cleared := false
+	var cleanedID *string
+	uc := tenant.NewTenantUsecase(repository{clearAll: func() error { cleared = true; return nil }}, func(_ context.Context, id string) error {
+		if !cleared {
+			t.Fatal("avatar cleanup ran before the database clear")
+		}
+		cleanedID = &id
+		return nil
+	})
+	if err := uc.ClearAll(context.Background()); err != nil || cleanedID == nil || *cleanedID != "" {
+		t.Fatalf("err=%v cleanedID=%v", err, cleanedID)
+	}
+	if err := tenant.NewTenantUsecase(repository{clearAll: func() error { t.Fatal("cleared without storage"); return nil }}, nil).ClearAll(context.Background()); err == nil {
+		t.Fatal("accepted missing storage")
+	}
+}
 
 func TestResetCleanupFailureKeepsRecordsAndRevokesSessions(t *testing.T) {
 	revoked, cleared := false, false

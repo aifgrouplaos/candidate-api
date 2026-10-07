@@ -15,27 +15,29 @@ docker-up:
 docker-down:
 	docker-compose down
 
-# Local only: deletes every row in every public table; restart the API to reseed departments.
+# Stop every API replica first. Deletes every row and every avatar, then asks you to type the DB name
+# (and host when not local). Non-local hosts need CONFIRM=production and get a pg_dump in backups/ first.
+# Usage: make db-clear [ENV_FILE=.env.production CONFIRM=production]
 db-clear:
-	@set -a; . ./.env; set +a; \
-	[ "$$APP_ENV" = development ] || { echo "Refusing: APP_ENV must be development (got '$$APP_ENV')."; exit 1; }; \
-	case "$$DB_HOST" in localhost|127.0.0.1) ;; *) echo "Refusing: DB_HOST must be localhost (got '$$DB_HOST')."; exit 1;; esac; \
-	printf "Delete every row in database '%s'? Type its name to confirm: " "$$DB_NAME"; read answer; \
-	[ "$$answer" = "$$DB_NAME" ] || { echo "Aborted."; exit 1; }; \
-	docker-compose exec -T -e PGPASSWORD="$$DB_PASSWORD" postgres psql -v ON_ERROR_STOP=1 -U "$$DB_USER" -d "$$DB_NAME" -c \
-	"DO \$$\$$ DECLARE tables text; BEGIN \
-	SELECT string_agg(format('%I.%I', schemaname, tablename), ', ') INTO tables FROM pg_tables WHERE schemaname = 'public'; \
-	IF tables IS NOT NULL THEN EXECUTE 'TRUNCATE ' || tables || ' RESTART IDENTITY CASCADE'; END IF; END \$$\$$;" && \
-	echo "Cleared all tables in '$$DB_NAME'. Restart the API to reseed departments."
+	@set -a; . "$(abspath $(ENV_FILE))"; set +a; \
+	case "$$DB_HOST" in localhost|127.0.0.1) ;; *) \
+		[ "$(CONFIRM)" = production ] || { echo "Refusing: DB_HOST '$$DB_HOST' is not local; rerun with CONFIRM=production."; exit 1; }; \
+		mkdir -p backups; file="backups/$$DB_NAME-$$(date +%Y%m%d-%H%M%S).sql"; echo "Backing up to $$file"; \
+		docker run --rm -e PGPASSWORD="$$DB_PASSWORD" -e PGSSLMODE="$$DB_SSL_MODE" postgres:18-alpine \
+			pg_dump -h "$$DB_HOST" -p "$$DB_PORT" -U "$$DB_USER" -d "$$DB_NAME" > "$$file" \
+			|| { rm -f "$$file"; echo "Backup failed; nothing deleted."; exit 1; };; \
+	esac; \
+	go run ./cmd/api -db-clear
 
-# Stop `make run` first. Usage: make tenant-setup [MANIFEST=tenants.local.json]
+# Stop `make run` first. Usage: make tenant-setup [ENV_FILE=.env] [MANIFEST=tenants.local.json]
 tenant-setup:
-	@set -a; . ./.env; set +a; go run ./cmd/api -tenant-setup "$(MANIFEST)"
+	@set -a; . "$(abspath $(ENV_FILE))"; set +a; go run ./cmd/api -tenant-setup "$(MANIFEST)"
 
-# Stop `make run` first. Usage: make tenant-reset TENANT=<tenant UUID>
+# Stop every API replica first. Deletes the tenant, its Admin, and all its data after you type the Admin email.
+# Usage: make tenant-reset TENANT=<tenant UUID> [ENV_FILE=.env]
 tenant-reset:
 	@[ -n "$(TENANT)" ] || { echo "Usage: make tenant-reset TENANT=<tenant UUID>"; exit 1; }
-	@set -a; . ./.env; set +a; go run ./cmd/api -tenant-reset "$(TENANT)"
+	@set -a; . "$(abspath $(ENV_FILE))"; set +a; go run ./cmd/api -tenant-reset "$(TENANT)"
 
 # Local only, destructive: builds and starts the API on APP_PORT, runs every candidate flow
 # for the first two MANIFEST tenants, then resets the first. Stop `make run` first.

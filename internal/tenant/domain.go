@@ -34,12 +34,17 @@ type TenantRepository interface {
 	// SetupTenants atomically creates missing accounts and initial conversations.
 	// Existing accounts must match; their passwords are unchanged.
 	SetupTenants(context.Context, []PreparedTenant) error
+	// AdminEmail returns the email of the tenant's only Admin.
+	AdminEmail(context.Context, string) (string, error)
 	// Revoke requires one existing Admin and revokes every tenant session.
 	Revoke(context.Context, string) error
-	// Clear removes assessment records and Employee logins, retaining the Admin.
+	// Clear removes every tenant record, including the Admin.
 	Clear(context.Context, string) error
+	// ClearAll truncates every table in the current schema.
+	ClearAll(context.Context) error
 }
 
 // CleanupAvatars removes all objects under exactly files/avatars/<tenant UUID>/,
-// including orphaned uploads, and reports listing and deletion failures.
+// or under files/avatars/ for an empty ID, including orphaned uploads, and
+// reports listing and deletion failures.
 type CleanupAvatars func(context.Context, string) error

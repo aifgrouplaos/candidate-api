@@ -33,9 +33,10 @@ func TestE2E(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
-	operator := func(args ...string) {
+	operator := func(stdin string, args ...string) {
 		cmd := exec.Command(bin, args...)
 		cmd.Dir = root
+		cmd.Stdin = strings.NewReader(stdin)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%v: %v\n%s", args, err, out)
 		}
@@ -43,7 +44,7 @@ func TestE2E(t *testing.T) {
 	base := "http://localhost:" + os.Getenv("APP_PORT")
 	manifest := os.Getenv("E2E_MANIFEST")
 
-	operator("-tenant-setup", manifest)
+	operator("", "-tenant-setup", manifest)
 	stop := startAPI(t, bin, root, base)
 	first := exercise(t, base, tenants[0])
 	second := exercise(t, base, tenants[1])
@@ -52,8 +53,8 @@ func TestE2E(t *testing.T) {
 	}
 
 	stop()
-	operator("-tenant-reset", first.tenantID)
-	operator("-tenant-setup", manifest)
+	operator(first.adminAccount.email+"\n", "-tenant-reset", first.tenantID)
+	operator("", "-tenant-setup", manifest)
 	startAPI(t, bin, root, base)
 	assertReset(t, base, first)
 	assertUntouched(t, second)

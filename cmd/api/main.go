@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,7 +44,7 @@ func main() {
 
 func run() error {
 	ctx := context.Background()
-	setup, reset, err := parseFlags()
+	setup, reset, clearAll, err := parseFlags()
 	if err != nil {
 		return err
 	}
@@ -52,8 +53,8 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("config load failed: %w", err)
 	}
-	if setup != "" || reset != "" {
-		return runTenantCommand(ctx, cfg, setup, reset)
+	if setup != "" || reset != "" || clearAll {
+		return runTenantCommand(ctx, cfg, setup, reset, clearAll)
 	}
 	trustedProxies, allowedOrigins, err := prepareServer(cfg)
 	if err != nil {
@@ -114,14 +115,21 @@ func run() error {
 	return app.Listen(":" + cfg.App.Port)
 }
 
-func parseFlags() (setup, reset string, err error) {
+func parseFlags() (setup, reset string, clearAll bool, err error) {
 	flag.StringVar(&setup, "tenant-setup", "", "create missing candidate tenants from a local JSON manifest; do not start HTTP")
-	flag.StringVar(&reset, "tenant-reset", "", "reset one tenant UUID while all API replicas are stopped; do not start HTTP")
+	flag.StringVar(&reset, "tenant-reset", "", "delete one tenant UUID and its Admin while all API replicas are stopped; do not start HTTP")
+	flag.BoolVar(&clearAll, "db-clear", false, "delete every database row and avatar while all API replicas are stopped; do not start HTTP")
 	flag.Parse()
-	if flag.NArg() != 0 || (setup != "" && reset != "") {
-		return "", "", errors.New("provide one tenant command or no arguments to start the API")
+	commands := 0
+	for _, set := range []bool{setup != "", reset != "", clearAll} {
+		if set {
+			commands++
+		}
 	}
-	return setup, reset, nil
+	if flag.NArg() != 0 || commands > 1 {
+		return "", "", false, errors.New("provide one tenant command or no arguments to start the API")
+	}
+	return setup, reset, clearAll, nil
 }
 
 // prepareServer reads the HTTP-only settings, installs the logger, and validates the config.
@@ -147,12 +155,13 @@ func prepareServer(cfg *config.Config) ([]string, string, error) {
 }
 
 // Operator commands share the composition root, never the HTTP route tree.
-func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantID string) error {
+func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantID string, clearAll bool) error {
 	if !cfg.PostgresEnabled {
 		return errors.New("tenant commands require DB_ENABLED=true")
 	}
-	if tenantID != "" && !cfg.MinIOEnabled {
-		return errors.New("reset requires MINIO_ENABLED=true to remove all tenant avatars")
+	deletes := tenantID != "" || clearAll
+	if deletes && !cfg.MinIOEnabled {
+		return errors.New("reset and clear require MINIO_ENABLED=true to remove avatars")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
@@ -162,7 +171,7 @@ func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantI
 	}
 	defer db.Close()
 	var cleanup tenant.CleanupAvatars
-	if tenantID != "" {
+	if deletes {
 		storage, err := minioadapter.New(ctx, cfg.MinIO)
 		if err != nil {
 			return fmt.Errorf("private storage unavailable: %w", err)
@@ -170,11 +179,36 @@ func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantI
 		cleanup = removeTenantAvatars(storage.Client(), cfg.MinIO.Bucket)
 	}
 	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), cleanup)
+	in := bufio.NewReader(os.Stdin)
+	if clearAll {
+		fmt.Printf("Deleting every row in database %q on %s and every avatar in bucket %q.\n", cfg.Postgres.DBName, cfg.Postgres.Host, cfg.MinIO.Bucket)
+		if host := cfg.Postgres.Host; host != "localhost" && host != "127.0.0.1" {
+			if err := confirm(in, "Type the database host", host); err != nil {
+				return err
+			}
+		}
+		if err := confirm(in, "Type the database name", cfg.Postgres.DBName); err != nil {
+			return err
+		}
+		if err := uc.ClearAll(ctx); err != nil {
+			return err
+		}
+		fmt.Println("Cleared the database and avatars. Run tenant-setup, then restart the API.")
+		return nil
+	}
 	if tenantID != "" {
+		email, err := uc.AdminEmail(ctx, tenantID)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Deleting tenant %s, its Admin %s, and all its data.\n", tenantID, email)
+		if err := confirm(in, "Type the Admin email", email); err != nil {
+			return err
+		}
 		if err := uc.Reset(ctx, tenantID); err != nil {
 			return err
 		}
-		fmt.Printf("Reset candidate tenant %s; Admin retained, all sessions revoked.\n", tenantID)
+		fmt.Printf("Deleted candidate tenant %s. Run tenant-setup to recreate it with a new tenant ID.\n", tenantID)
 		return nil
 	}
 	tenants, err := readManifest(manifest)
@@ -196,7 +230,10 @@ func removeTenantAvatars(client *miniogo.Client, bucket string) tenant.CleanupAv
 		// List the full prefix, including objects no longer referenced by an Employee.
 		listCtx, stop := context.WithCancel(ctx)
 		defer stop()
-		prefix := "files/avatars/" + id + "/"
+		prefix := "files/avatars/"
+		if id != "" {
+			prefix += id + "/"
+		}
 		for object := range client.ListObjects(listCtx, bucket, miniogo.ListObjectsOptions{Prefix: prefix, Recursive: true, WithVersions: true}) {
 			if object.Err != nil {
 				return object.Err
@@ -210,6 +247,15 @@ func removeTenantAvatars(client *miniogo.Client, bucket string) tenant.CleanupAv
 		}
 		return ctx.Err()
 	}
+}
+
+func confirm(in *bufio.Reader, prompt, want string) error {
+	fmt.Printf("%s to confirm: ", prompt)
+	answer, _ := in.ReadString('\n')
+	if strings.TrimSpace(answer) != want {
+		return errors.New("aborted: confirmation did not match")
+	}
+	return nil
 }
 
 func readManifest(path string) ([]tenant.Tenant, error) {
