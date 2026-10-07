@@ -15,7 +15,7 @@ type repository struct {
 	clear     func(string) error
 }
 
-func (r repository) Provision(_ context.Context, tenants []assessment.PreparedTenant) error {
+func (r repository) SetupTenants(_ context.Context, tenants []assessment.PreparedTenant) error {
 	return r.provision(tenants)
 }
 func (r repository) Revoke(_ context.Context, id string) error { return r.revoke(id) }
@@ -64,7 +64,7 @@ func TestProvisionTenCandidates(t *testing.T) {
 	var prepared []assessment.PreparedTenant
 	manifest := tenCandidates()
 	uc := assessment.NewAssessmentUsecase(repository{provision: func(ts []assessment.PreparedTenant) error { prepared = ts; return nil }}, nil)
-	if err := uc.Provision(context.Background(), manifest, func(string) string { return "test-only-password" }); err != nil {
+	if err := uc.SetupTenants(context.Background(), manifest, func(string) string { return "test-only-password" }); err != nil {
 		t.Fatal(err)
 	}
 	if len(prepared) != 10 {
@@ -80,7 +80,7 @@ func TestProvisionTenCandidates(t *testing.T) {
 func TestProvisionRejectsEmptyOrOversizedManifest(t *testing.T) {
 	uc := assessment.NewAssessmentUsecase(repository{}, nil)
 	for _, manifest := range [][]assessment.Tenant{nil, make([]assessment.Tenant, 101)} {
-		if err := uc.Provision(context.Background(), manifest, func(string) string { t.Fatal("invalid manifest read passwords"); return "" }); err == nil {
+		if err := uc.SetupTenants(context.Background(), manifest, func(string) string { t.Fatal("invalid manifest read passwords"); return "" }); err == nil {
 			t.Fatal("accepted an empty or oversized manifest")
 		}
 	}
@@ -97,7 +97,7 @@ func TestProvisionValidatesAllAccountsBeforePersistence(t *testing.T) {
 	} {
 		ts := tenants()
 		mutate(ts)
-		err := uc.Provision(context.Background(), ts, func(name string) string {
+		err := uc.SetupTenants(context.Background(), ts, func(name string) string {
 			if name == "MISSING" {
 				return ""
 			}

@@ -181,7 +181,7 @@ func runAssessment(ctx context.Context, cfg *config.Config, manifest, tenantID s
 	if err != nil {
 		return err
 	}
-	if err := uc.Provision(ctx, tenants, os.Getenv); err != nil {
+	if err := uc.SetupTenants(ctx, tenants, os.Getenv); err != nil {
 		return err
 	}
 	fmt.Printf("Provisioned %d candidate tenants; existing account credentials unchanged.\n", len(tenants))

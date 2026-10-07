@@ -28,9 +28,9 @@ type PreparedTenant struct {
 }
 
 type AssessmentRepository interface {
-	// Provision atomically creates missing accounts and initial conversations.
+	// SetupTenants atomically creates missing accounts and initial conversations.
 	// Existing accounts must match; their passwords are unchanged.
-	Provision(context.Context, []PreparedTenant) error
+	SetupTenants(context.Context, []PreparedTenant) error
 	// Revoke requires one existing Admin and revokes every tenant session.
 	Revoke(context.Context, string) error
 	// Clear removes assessment records and Employee logins, retaining the Admin.

@@ -21,8 +21,8 @@ func NewAssessmentUsecase(repo AssessmentRepository, cleanup CleanupAvatars) *As
 	return &AssessmentUsecase{repo: repo, cleanup: cleanup}
 }
 
-// Provision validates all accounts before hashing or changing persistence.
-func (u *AssessmentUsecase) Provision(ctx context.Context, tenants []Tenant, getenv func(string) string) error {
+// SetupTenants validates all accounts before hashing or changing persistence.
+func (u *AssessmentUsecase) SetupTenants(ctx context.Context, tenants []Tenant, getenv func(string) string) error {
 	if len(tenants) < 1 || len(tenants) > 100 {
 		return errs.BadRequest("provide between 1 and 100 candidate tenants")
 	}
@@ -75,7 +75,7 @@ func (u *AssessmentUsecase) Provision(ctx context.Context, tenants []Tenant, get
 			},
 		}
 	}
-	return u.repo.Provision(ctx, prepared)
+	return u.repo.SetupTenants(ctx, prepared)
 }
 
 // Reset requires stopped API replicas. Revocation commits before storage cleanup,

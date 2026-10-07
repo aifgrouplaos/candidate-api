@@ -55,7 +55,7 @@ func TestProvisionAndResetIsolationAgainstPostgres(t *testing.T) {
 	ts := tenants()
 	provision := func() {
 		t.Helper()
-		if err := uc.Provision(ctx, ts, func(string) string { return "test-only-password" }); err != nil {
+		if err := uc.SetupTenants(ctx, ts, func(string) string { return "test-only-password" }); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -161,7 +161,7 @@ func TestProvisionConflictRollsBackBothTenants(t *testing.T) {
 	ts := tenants()
 	mustCreate(t, db.Raw(), &auth.User{TenantID: "00000000-0000-4000-8000-000000000003", Email: ts[1].Employee.Email, FullName: "Other Tenant", Role: auth.RoleEmployee, PasswordHash: "existing", Active: true})
 	uc := assessment.NewAssessmentUsecase(assessment.NewAssessmentRepository(db), nil)
-	if err := uc.Provision(ctx, ts, func(string) string { return "test-only-password" }); err == nil {
+	if err := uc.SetupTenants(ctx, ts, func(string) string { return "test-only-password" }); err == nil {
 		t.Fatal("accepted cross-tenant email")
 	}
 	assertCount(t, db.Raw().Model(&auth.User{}), 1)
@@ -181,7 +181,7 @@ func TestProvisionTenCandidateTenantsAgainstPostgres(t *testing.T) {
 	db := assessmentDB(t)
 	uc := assessment.NewAssessmentUsecase(assessment.NewAssessmentRepository(db), nil)
 	for range 2 {
-		if err := uc.Provision(context.Background(), tenCandidates(), func(string) string { return "test-only-password" }); err != nil {
+		if err := uc.SetupTenants(context.Background(), tenCandidates(), func(string) string { return "test-only-password" }); err != nil {
 			t.Fatal(err)
 		}
 	}

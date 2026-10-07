@@ -19,7 +19,7 @@ func NewAssessmentRepository(db contract.ORM) AssessmentRepository {
 	return &assessmentRepository{db: db}
 }
 
-func (r *assessmentRepository) Provision(ctx context.Context, tenants []PreparedTenant) error {
+func (r *assessmentRepository) SetupTenants(ctx context.Context, tenants []PreparedTenant) error {
 	return r.db.Transaction(ctx, func(tx *gorm.DB) error {
 		for _, t := range tenants {
 			if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", "employees:"+t.Tenant.ID).Error; err != nil {
