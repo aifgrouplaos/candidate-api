@@ -270,7 +270,8 @@ func TestRepositoryAgainstPostgres(t *testing.T) {
 		if restored.HireDate == nil || restored.HireDate.Format(time.DateOnly) != "2020-01-02" {
 			t.Fatalf("hire date = %v", restored.HireDate)
 		}
-		if restored.AvatarURL == nil || *restored.AvatarURL != "https://cdn.example/avatar.png" || !restored.CreatedAt.Equal(first.CreatedAt) || !restored.UpdatedAt.After(restored.CreatedAt) {
+		// PostgreSQL persists microseconds; the in-memory creation time can be finer.
+		if restored.AvatarURL == nil || *restored.AvatarURL != "https://cdn.example/avatar.png" || !restored.CreatedAt.Equal(first.CreatedAt.Truncate(time.Microsecond)) || !restored.UpdatedAt.After(restored.CreatedAt) {
 			t.Fatalf("retained fields = %+v", restored)
 		}
 		if _, err := authRepo.FindActiveUserByEmail(ctx, "somchai@example.test"); err != nil {

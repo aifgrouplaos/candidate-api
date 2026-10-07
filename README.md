@@ -31,6 +31,10 @@ The command prompts for the Admin's email and name, then asks for a password twi
 
 ## Project scope
 
+For repeatable candidate setup and tenant reset, follow
+[the tenant operations runbook](docs/tenant-operations.md).
+The operator commands run from `cmd/api` and expose no HTTP reset endpoint.
+
 | Exercise | Capability | Main requirements |
 | --- | --- | --- |
 | A1 | Authentication and employee management | Login, rotating refresh tokens, role-based access, employee CRUD, search, filtering, sorting, pagination, and avatar uploads |

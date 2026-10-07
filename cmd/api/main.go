@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	gormadapter "github.com/BounkhongDev/bkgo/adapter/gorm"
 	"github.com/BounkhongDev/bkgo/adapter/jwt"
@@ -21,11 +25,13 @@ import (
 	"github.com/aifgrouplaos/candidate-api/internal/chat"
 	"github.com/aifgrouplaos/candidate-api/internal/employee"
 	"github.com/aifgrouplaos/candidate-api/internal/project"
+	"github.com/aifgrouplaos/candidate-api/internal/tenant"
 	"github.com/aifgrouplaos/candidate-api/pkg/apidocs"
 	"github.com/aifgrouplaos/candidate-api/pkg/httpresponse"
 	"github.com/aifgrouplaos/candidate-api/pkg/ratelimit"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	miniogo "github.com/minio/minio-go/v7"
 )
 
 func main() {
@@ -37,36 +43,30 @@ func main() {
 
 func run() error {
 	ctx := context.Background()
+	setup, reset, err := parseFlags()
+	if err != nil {
+		return err
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("config load failed: %w", err)
 	}
-	trustedProxies, err := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
+	if setup != "" || reset != "" {
+		return runTenantCommand(ctx, cfg, setup, reset)
+	}
+	trustedProxies, allowedOrigins, err := prepareServer(cfg)
 	if err != nil {
-		return fmt.Errorf("trusted proxy configuration invalid: %w", err)
-	}
-	allowedOrigins, err := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
-	if err != nil {
-		return fmt.Errorf("allowed origins configuration invalid: %w", err)
-	}
-
-	log := logger.Development()
-	if cfg.App.Env == "production" {
-		log = logger.Production()
-	}
-	slog.SetDefault(log)
-	if err := validateConfig(cfg, trustedProxies); err != nil {
 		return err
 	}
 
 	// Composition root: construct adapters only when enabled, hold them as ports.
 	var (
-		db         contract.ORM
-		cache      contract.Cache
-		redisCache *redis.Cache
-		store      contract.Storage
-		token      contract.Token
+		db      contract.ORM
+		cache   contract.Cache
+		store   contract.Storage
+		token   contract.Token
+		limiter ratelimit.Store
 	)
 
 	if cfg.PostgresEnabled {
@@ -79,12 +79,13 @@ func run() error {
 	}
 
 	if cfg.RedisEnabled {
-		redisCache, err = redis.New(ctx, cfg.Redis)
+		redisCache, err := redis.New(ctx, cfg.Redis)
 		if err != nil {
 			return fmt.Errorf("redis connect failed: %w", err)
 		}
 		cache = redisCache
 		defer cache.Close()
+		limiter = ratelimit.NewRedisStore(redisCache.Client())
 	}
 
 	if cfg.MinIOEnabled {
@@ -96,11 +97,6 @@ func run() error {
 
 	if cfg.JWTEnabled {
 		token = jwt.New(cfg.JWT)
-	}
-
-	var limiter ratelimit.Store
-	if redisCache != nil {
-		limiter = ratelimit.NewRedisStore(redisCache.Client())
 	}
 
 	app := newApp(cfg, trustedProxies, allowedOrigins, db, limiter, token, store)
@@ -116,6 +112,122 @@ func run() error {
 		"jwt", cfg.JWTEnabled,
 	)
 	return app.Listen(":" + cfg.App.Port)
+}
+
+func parseFlags() (setup, reset string, err error) {
+	flag.StringVar(&setup, "tenant-setup", "", "create missing candidate tenants from a local JSON manifest; do not start HTTP")
+	flag.StringVar(&reset, "tenant-reset", "", "reset one tenant UUID while all API replicas are stopped; do not start HTTP")
+	flag.Parse()
+	if flag.NArg() != 0 || (setup != "" && reset != "") {
+		return "", "", errors.New("provide one tenant command or no arguments to start the API")
+	}
+	return setup, reset, nil
+}
+
+// prepareServer reads the HTTP-only settings, installs the logger, and validates the config.
+func prepareServer(cfg *config.Config) ([]string, string, error) {
+	trustedProxies, err := parseTrustedProxies(os.Getenv("TRUSTED_PROXIES"))
+	if err != nil {
+		return nil, "", fmt.Errorf("trusted proxy configuration invalid: %w", err)
+	}
+	allowedOrigins, err := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
+	if err != nil {
+		return nil, "", fmt.Errorf("allowed origins configuration invalid: %w", err)
+	}
+
+	log := logger.Development()
+	if cfg.App.Env == "production" {
+		log = logger.Production()
+	}
+	slog.SetDefault(log)
+	if err := validateConfig(cfg, trustedProxies); err != nil {
+		return nil, "", err
+	}
+	return trustedProxies, allowedOrigins, nil
+}
+
+// Operator commands share the composition root, never the HTTP route tree.
+func runTenantCommand(ctx context.Context, cfg *config.Config, manifest, tenantID string) error {
+	if !cfg.PostgresEnabled {
+		return errors.New("tenant commands require DB_ENABLED=true")
+	}
+	if tenantID != "" && !cfg.MinIOEnabled {
+		return errors.New("reset requires MINIO_ENABLED=true to remove all tenant avatars")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	db, err := openPostgres(cfg.Postgres)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var cleanup tenant.CleanupAvatars
+	if tenantID != "" {
+		storage, err := minioadapter.New(ctx, cfg.MinIO)
+		if err != nil {
+			return fmt.Errorf("private storage unavailable: %w", err)
+		}
+		cleanup = removeTenantAvatars(storage.Client(), cfg.MinIO.Bucket)
+	}
+	uc := tenant.NewTenantUsecase(tenant.NewTenantRepository(db), cleanup)
+	if tenantID != "" {
+		if err := uc.Reset(ctx, tenantID); err != nil {
+			return err
+		}
+		fmt.Printf("Reset candidate tenant %s; Admin retained, all sessions revoked.\n", tenantID)
+		return nil
+	}
+	tenants, err := readManifest(manifest)
+	if err != nil {
+		return err
+	}
+	if err := uc.SetupTenants(ctx, tenants, os.Getenv); err != nil {
+		return err
+	}
+	for _, t := range tenants {
+		fmt.Printf("%s  %s\n", t.ID, t.Admin.Email)
+	}
+	fmt.Printf("Set up %d candidate tenants; existing account credentials unchanged.\n", len(tenants))
+	return nil
+}
+
+func removeTenantAvatars(client *miniogo.Client, bucket string) tenant.CleanupAvatars {
+	return func(ctx context.Context, id string) error {
+		// List the full prefix, including objects no longer referenced by an Employee.
+		listCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		prefix := "avatars/" + id + "/"
+		for object := range client.ListObjects(listCtx, bucket, miniogo.ListObjectsOptions{Prefix: prefix, Recursive: true, WithVersions: true}) {
+			if object.Err != nil {
+				return object.Err
+			}
+			if !strings.HasPrefix(object.Key, prefix) {
+				return errors.New("storage returned an object outside the tenant prefix")
+			}
+			if err := client.RemoveObject(ctx, bucket, object.Key, miniogo.RemoveObjectOptions{VersionID: object.VersionID}); err != nil {
+				return err
+			}
+		}
+		return ctx.Err()
+	}
+}
+
+func readManifest(path string) ([]tenant.Tenant, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("cannot open tenant manifest")
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(io.LimitReader(file, 64*1024))
+	decoder.DisallowUnknownFields()
+	var tenants []tenant.Tenant
+	if err := decoder.Decode(&tenants); err != nil {
+		return nil, errors.New("invalid tenant JSON manifest")
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return nil, errors.New("tenant manifest must contain one JSON array")
+	}
+	return tenants, nil
 }
 
 func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
@@ -188,7 +300,7 @@ func newApp(cfg *config.Config, trustedProxies []string, allowedOrigins string, 
 		}
 		authHandler := auth.NewAuthHandler(auth.NewAuthUsecase(authRepository, token))
 		authHandler.RegisterRoutes(api, loginLimit, refreshLimit, protected...)
-		employees := employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db, chat.ProvisionConversation), store, cfg.MinIO.Bucket)
+		employees := employee.NewEmployeeUsecase(employee.NewEmployeeRepository(db, chat.EnsureConversation), store, cfg.MinIO.Bucket)
 		employee.NewEmployeeHandler(employees).RegisterRoutes(api, protected...)
 		project.NewProjectHandler(project.NewProjectUsecase(project.NewProjectRepository(db))).RegisterRoutes(api, protected...)
 		chatHandler := chat.NewChatHandler(chat.NewChatUsecase(chat.NewChatRepository(db), employees.AvatarURL, authRepository))

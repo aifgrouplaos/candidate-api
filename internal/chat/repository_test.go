@@ -113,7 +113,7 @@ func wantInbox(t *testing.T, repo ChatRepository, reader auth.Principal, filter 
 
 func TestConversationsAgainstPostgres(t *testing.T) {
 	db := newTestDB(t)
-	f := &chatFixture{t: t, db: db, employees: employee.NewEmployeeRepository(db, ProvisionConversation)}
+	f := &chatFixture{t: t, db: db, employees: employee.NewEmployeeRepository(db, EnsureConversation)}
 	repo := NewChatRepository(db)
 	ctx := context.Background()
 
@@ -174,7 +174,7 @@ func TestConversationsAgainstPostgres(t *testing.T) {
 
 func TestMessagesAgainstPostgres(t *testing.T) {
 	db := newTestDB(t)
-	f := &chatFixture{t: t, db: db, employees: employee.NewEmployeeRepository(db, ProvisionConversation)}
+	f := &chatFixture{t: t, db: db, employees: employee.NewEmployeeRepository(db, EnsureConversation)}
 	repo := NewChatRepository(db)
 	ctx := context.Background()
 	admin := f.admin(tenantA, "admin@example.test")
@@ -239,7 +239,7 @@ type sendFixture struct {
 
 func newSendFixture(t *testing.T) *sendFixture {
 	db := newTestDB(t)
-	f := &chatFixture{t: t, db: db, employees: employee.NewEmployeeRepository(db, ProvisionConversation)}
+	f := &chatFixture{t: t, db: db, employees: employee.NewEmployeeRepository(db, EnsureConversation)}
 	s := &sendFixture{t: t, repo: NewChatRepository(db), admin: f.admin(tenantA, "admin@example.test")}
 	_, s.somchai = f.employee(tenantA, "Somchai", "somchai@example.test")
 	f.employee(tenantA, "Anna", "anna@example.test")
