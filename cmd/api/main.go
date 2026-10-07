@@ -167,24 +167,7 @@ func runAssessment(ctx context.Context, cfg *config.Config, manifest, tenantID s
 		if err != nil {
 			return fmt.Errorf("private storage unavailable: %w", err)
 		}
-		cleanup = func(ctx context.Context, id string) error {
-			// List the full prefix, including objects no longer referenced by an Employee.
-			listCtx, stop := context.WithCancel(ctx)
-			defer stop()
-			prefix := "avatars/" + id + "/"
-			for object := range storage.Client().ListObjects(listCtx, cfg.MinIO.Bucket, miniogo.ListObjectsOptions{Prefix: prefix, Recursive: true, WithVersions: true}) {
-				if object.Err != nil {
-					return object.Err
-				}
-				if !strings.HasPrefix(object.Key, prefix) {
-					return errors.New("storage returned an object outside the tenant prefix")
-				}
-				if err := storage.Client().RemoveObject(ctx, cfg.MinIO.Bucket, object.Key, miniogo.RemoveObjectOptions{VersionID: object.VersionID}); err != nil {
-					return err
-				}
-			}
-			return ctx.Err()
-		}
+		cleanup = removeTenantAvatars(storage.Client(), cfg.MinIO.Bucket)
 	}
 	uc := assessment.NewAssessmentUsecase(assessment.NewAssessmentRepository(db), cleanup)
 	if tenantID != "" {
@@ -194,25 +177,54 @@ func runAssessment(ctx context.Context, cfg *config.Config, manifest, tenantID s
 		fmt.Printf("Reset candidate tenant %s; Admin retained, all sessions revoked.\n", tenantID)
 		return nil
 	}
-	file, err := os.Open(manifest)
+	tenants, err := readManifest(manifest)
 	if err != nil {
-		return errors.New("cannot open assessment manifest")
-	}
-	defer file.Close()
-	decoder := json.NewDecoder(io.LimitReader(file, 64*1024))
-	decoder.DisallowUnknownFields()
-	var tenants []assessment.Tenant
-	if err := decoder.Decode(&tenants); err != nil {
-		return errors.New("invalid assessment JSON manifest")
-	}
-	if err := decoder.Decode(new(any)); err != io.EOF {
-		return errors.New("assessment manifest must contain one JSON array")
+		return err
 	}
 	if err := uc.Provision(ctx, tenants, os.Getenv); err != nil {
 		return err
 	}
 	fmt.Printf("Provisioned %d candidate tenants; existing account credentials unchanged.\n", len(tenants))
 	return nil
+}
+
+func removeTenantAvatars(client *miniogo.Client, bucket string) assessment.CleanupAvatars {
+	return func(ctx context.Context, id string) error {
+		// List the full prefix, including objects no longer referenced by an Employee.
+		listCtx, stop := context.WithCancel(ctx)
+		defer stop()
+		prefix := "avatars/" + id + "/"
+		for object := range client.ListObjects(listCtx, bucket, miniogo.ListObjectsOptions{Prefix: prefix, Recursive: true, WithVersions: true}) {
+			if object.Err != nil {
+				return object.Err
+			}
+			if !strings.HasPrefix(object.Key, prefix) {
+				return errors.New("storage returned an object outside the tenant prefix")
+			}
+			if err := client.RemoveObject(ctx, bucket, object.Key, miniogo.RemoveObjectOptions{VersionID: object.VersionID}); err != nil {
+				return err
+			}
+		}
+		return ctx.Err()
+	}
+}
+
+func readManifest(path string) ([]assessment.Tenant, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, errors.New("cannot open assessment manifest")
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(io.LimitReader(file, 64*1024))
+	decoder.DisallowUnknownFields()
+	var tenants []assessment.Tenant
+	if err := decoder.Decode(&tenants); err != nil {
+		return nil, errors.New("invalid assessment JSON manifest")
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return nil, errors.New("assessment manifest must contain one JSON array")
+	}
+	return tenants, nil
 }
 
 func openPostgres(cfg config.Postgres) (*gormadapter.DB, error) {
