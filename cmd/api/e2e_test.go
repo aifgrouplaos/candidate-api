@@ -35,6 +35,14 @@ func TestE2E(t *testing.T) {
 	if os.Getenv("APP_ENV") != "development" || !local(os.Getenv("DB_HOST")) || !local(os.Getenv("MINIO_ENDPOINT")) {
 		t.Fatal("refusing: E2E resets a tenant, so it needs APP_ENV=development and local DB_HOST and MINIO_ENDPOINT")
 	}
+	if os.Getenv("APP_PORT") == "" {
+		t.Fatal("APP_PORT is required")
+	}
+	allowed, err := parseAllowedOrigins(os.Getenv("ALLOWED_ORIGINS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin = strings.Split(allowed, ",")[0]
 	tenants, err := readManifest(os.Getenv("E2E_MANIFEST"))
 	if err != nil || len(tenants) < 2 {
 		t.Fatalf("E2E_MANIFEST needs at least two tenants: %v", err)
@@ -71,6 +79,7 @@ func TestE2E(t *testing.T) {
 	for _, token := range []string{first.admin.token, first.employee.token} {
 		first.admin.with(token).call("GET", "/auth/me", nil, 401, nil)
 	}
+	first.admin.call("POST", "/auth/refresh", map[string]string{"refreshToken": first.admin.refresh}, 401, nil)
 	login(t, base, first.created, 401)
 	admin := login(t, base, first.adminAccount, 200)
 	var list []struct{ ID, Email string }
@@ -113,6 +122,7 @@ type tenantRun struct {
 	created                        credentials
 	admin, employee, createdClient client
 	createdID, projectID, avatar   string
+	projectCode                    string
 	conversationID, messageID      string
 }
 
@@ -133,6 +143,10 @@ func exercise(t *testing.T, base string, tn tenant.Tenant) tenantRun {
 		t.Fatalf("%s role = %q", tn.Admin.Email, me.Role)
 	}
 	run.tenantID = me.TenantID
+	var rotated struct{ AccessToken, RefreshToken string }
+	run.admin.call("POST", "/auth/refresh", map[string]string{"refreshToken": run.admin.refresh}, 200, &rotated)
+	run.admin.call("POST", "/auth/refresh", map[string]string{"refreshToken": run.admin.refresh}, 401, nil)
+	run.admin.token, run.admin.refresh = rotated.AccessToken, rotated.RefreshToken
 
 	var departments []struct{ ID string }
 	run.admin.call("GET", "/departments", nil, 200, &departments)
@@ -173,8 +187,9 @@ func exercise(t *testing.T, base string, tn tenant.Tenant) tenantRun {
 		t.Errorf("presigned avatar download status = %d", status)
 	}
 
+	run.projectCode = "E2E-" + uuid.NewString()[:8]
 	project := map[string]any{
-		"name": "E2E Project", "code": "E2E-" + uuid.NewString()[:8], "ownerId": employee.ID,
+		"name": "E2E Project", "code": run.projectCode, "ownerId": employee.ID,
 		"startDate": "2026-11-01", "endDate": "2026-12-31",
 		"phases": []any{map[string]any{
 			"name": "Build", "order": 1, "startDate": "2026-11-01", "endDate": "2026-11-30",
@@ -216,7 +231,10 @@ func exercise(t *testing.T, base string, tn tenant.Tenant) tenantRun {
 	if unread.Total != 1 {
 		t.Errorf("unread total = %d, want 1", unread.Total)
 	}
-	run.createdClient.call("POST", "/chat/conversations/"+run.conversationID+"/read", map[string]any{"lastReadMessageId": message.ID}, 200, nil)
+	sendEvent(t, events, "message.read", map[string]string{"conversationId": run.conversationID, "lastReadMessageId": message.ID})
+	if status := awaitEvent(t, events, "message.status", "").Status; status != "read" {
+		t.Errorf("message.status = %q, want read", status)
+	}
 	run.createdClient.call("GET", "/chat/unread-count", nil, 200, &unread)
 	if unread.Total != 0 {
 		t.Errorf("unread total after read = %d, want 0", unread.Total)
@@ -237,60 +255,74 @@ func assertIsolated(t *testing.T, run, other tenantRun) {
 	other.admin.call("POST", "/chat/conversations/"+run.conversationID+"/messages",
 		map[string]any{"clientMessageId": uuid.NewString(), "text": "intrusion"}, 404, nil)
 	other.createdClient.call("GET", "/chat/conversations/"+run.conversationID, nil, 404, nil)
-	var projects []struct{ ID string }
-	other.admin.call("GET", "/projects?limit=100", nil, 200, &projects)
-	if containsID(projects, run.projectID) {
+	var listed []struct{ ID string }
+	other.admin.call("GET", "/projects?search="+run.projectCode, nil, 200, &listed)
+	if len(listed) != 0 {
 		t.Error("a Project is listed in another tenant")
 	}
-	var employees []struct{ ID string }
-	other.admin.call("GET", "/employees?limit=100&search=e2e-", nil, 200, &employees)
-	if containsID(employees, run.createdID) {
+	other.admin.call("GET", "/employees?search="+run.created.email, nil, 200, &listed)
+	if len(listed) != 0 {
 		t.Error("an Employee is listed in another tenant")
+	}
+	events := other.createdClient.dial()
+	defer events.Close()
+	sendEvent(t, events, "typing", map[string]any{"conversationId": run.conversationID, "isTyping": true})
+	if code := awaitEvent(t, events, "error", "").Code; code != "NOT_FOUND" {
+		t.Errorf("cross-tenant typing event error = %q, want NOT_FOUND", code)
 	}
 }
 
-// startAPI starts the binary from the repository root, waits for /health, and returns a stop func.
-func startAPI(t *testing.T, bin, root, base string) func() {
+// startAPI starts the binary in dir, waits for its /health, and returns a stop func.
+func startAPI(t *testing.T, bin, dir, base string) func() {
 	t.Helper()
+	if res, err := http.Get(base + "/health"); err == nil {
+		res.Body.Close()
+		t.Fatalf("%s already serves an API; stop it so E2E does not test or reset under it", base)
+	}
 	cmd := exec.Command(bin)
-	cmd.Dir = root
+	cmd.Dir = dir
 	var logs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &logs, &logs
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	stopped := false
+	exited := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(exited) }()
 	stop := func() {
-		if !stopped {
-			stopped = true
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-		}
+		_ = cmd.Process.Kill()
+		<-exited
 	}
 	t.Cleanup(stop)
 	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		select {
+		case <-exited:
+			t.Fatalf("API exited during startup:\n%s", logs.String())
+		default:
+		}
 		if res, err := http.Get(base + "/health"); err == nil {
 			res.Body.Close()
 			return stop
 		}
 	}
-	stop()
-	t.Fatalf("API did not become healthy; is %s already in use?\n%s", base, logs.String())
+	t.Fatalf("API did not become healthy at %s:\n%s", base, logs.String())
 	return nil
 }
 
+// origin is the browser origin E2E requests send: the first allowed origin.
+var origin string
+
 type client struct {
-	t                *testing.T
-	base, token, key string
-	email            string
+	t                         *testing.T
+	base, token, refresh, key string
+	email                     string
 }
 
 func login(t *testing.T, base string, account credentials, want int) client {
 	t.Helper()
 	c := client{t: t, base: base, email: account.email}
-	var session struct{ AccessToken string }
+	var session struct{ AccessToken, RefreshToken string }
 	c.call("POST", "/auth/login", map[string]string{"email": account.email, "password": account.password}, want, &session)
-	c.token = session.AccessToken
+	c.token, c.refresh = session.AccessToken, session.RefreshToken
 	return c
 }
 
@@ -326,7 +358,7 @@ func (c client) send(method, path, contentType string, body io.Reader, want int,
 	c.t.Helper()
 	req, _ := http.NewRequest(method, c.base+"/api/v1"+path, body)
 	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("Origin", "http://localhost:5173")
+	req.Header.Set("Origin", origin)
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
@@ -342,7 +374,7 @@ func (c client) send(method, path, contentType string, body io.Reader, want int,
 	if res.StatusCode != want {
 		c.t.Fatalf("%s %s as %s: status %d, want %d: %s", method, path, c.email, res.StatusCode, want, raw)
 	}
-	if got := res.Header.Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+	if got := res.Header.Get("Access-Control-Allow-Origin"); got != origin {
 		c.t.Errorf("%s %s: Access-Control-Allow-Origin = %q", method, path, got)
 	}
 	if out != nil && want < 300 {
@@ -359,26 +391,36 @@ func (c client) dial() *websocket.Conn {
 	var ticket struct{ Ticket string }
 	c.call("POST", "/chat/ws-ticket", nil, 200, &ticket)
 	url := strings.Replace(c.base, "http", "ws", 1) + "/ws/chat?ticket=" + ticket.Ticket
-	conn, _, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": {"http://localhost:5173"}})
+	conn, _, err := websocket.DefaultDialer.Dial(url, http.Header{"Origin": {origin}})
 	if err != nil {
 		c.t.Fatalf("dial chat WebSocket: %v", err)
 	}
 	return conn
 }
 
-func awaitEvent(t *testing.T, conn *websocket.Conn, eventType, id string) {
+func sendEvent(t *testing.T, conn *websocket.Conn, eventType string, data any) {
+	t.Helper()
+	if err := conn.WriteJSON(map[string]any{"type": eventType, "data": data}); err != nil {
+		t.Fatalf("send %s: %v", eventType, err)
+	}
+}
+
+type eventData struct{ ID, Status, Code string }
+
+// awaitEvent skips other events until one of eventType arrives, with data.id == id unless id is empty.
+func awaitEvent(t *testing.T, conn *websocket.Conn, eventType, id string) eventData {
 	t.Helper()
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	for {
 		var event struct {
 			Type string
-			Data struct{ ID string }
+			Data eventData
 		}
 		if err := conn.ReadJSON(&event); err != nil {
 			t.Fatalf("waiting for %s %s: %v", eventType, id, err)
 		}
-		if event.Type == eventType && event.Data.ID == id {
-			return
+		if event.Type == eventType && (id == "" || event.Data.ID == id) {
+			return event.Data
 		}
 	}
 }

@@ -29,7 +29,7 @@ info:
 
     | type | data | effect |
     | --- | --- | --- |
-    | `message.delivered` | `{ "conversationId", "lastContiguousMessageId" }` | Confirms receipt through that message for all of the caller's sessions. |
+    | `message.delivered` | `{ "conversationId", "lastContiguousMessageId" }` | Confirms receipt through that message, advancing the delivery position shared by the caller's sessions; both participants get `message.status`. |
     | `message.read` | `{ "conversationId", "lastReadMessageId" }` | Marks messages read through that message; same as `POST /chat/conversations/{id}/read`. |
     | `typing` | `{ "conversationId", "isTyping" }` | Relays typing state to the other participant; not stored. |
     | `ping` | `{}` | Optional heartbeat; no reply. |
@@ -54,6 +54,8 @@ info:
     | `1008` | Too many sessions for the user, or the event rate limit was exceeded. | Close other tabs or slow down, then reconnect. |
     | `1011` | Unexpected server error. | Reconnect with backoff. |
     | `1013` | The server dropped the session, for example a slow reader. | Reconnect and resync with `after`. |
+    | `1009` | A client frame exceeded 4096 bytes. | Send smaller events, then reconnect. |
+    | `1006` | No close frame: the network dropped, or the connection was idle for 50 seconds. | Reconnect with backoff and resync with `after`. |
 servers:
   - url: /api/v1
 security:
