@@ -31,6 +31,8 @@ the repository root with the same database and bucket settings as the API.
    go run ./cmd/api -tenant-setup tenants.local.json
    ```
 
+   Or run `make tenant-setup`, which loads `.env` first.
+
    It prints one `<tenant ID>  <Admin email>` line per tenant. Keep the tenant IDs
    for later reset; rerunning setup prints the same IDs.
 
@@ -56,6 +58,8 @@ printed by setup for that Admin, then run:
 ```sh
 go run ./cmd/api -tenant-reset 10000000-0000-4000-8000-000000000001
 ```
+
+Or run `make tenant-reset TENANT=<tenant UUID>`.
 
 Reset requires configured private storage even if the tenant has no recorded
 avatars. It requires exactly one existing Admin in the selected tenant. It:
