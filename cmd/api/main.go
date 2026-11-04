@@ -18,7 +18,6 @@ import (
 	gormadapter "github.com/BounkhongDev/bkgo/adapter/gorm"
 	"github.com/BounkhongDev/bkgo/adapter/jwt"
 	minioadapter "github.com/BounkhongDev/bkgo/adapter/minio"
-	"github.com/BounkhongDev/bkgo/adapter/redis"
 	"github.com/BounkhongDev/bkgo/config"
 	"github.com/BounkhongDev/bkgo/contract"
 	"github.com/BounkhongDev/bkgo/logger"
@@ -33,6 +32,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	miniogo "github.com/minio/minio-go/v7"
+	goredis "github.com/redis/go-redis/v9"
 )
 
 func main() {
@@ -64,7 +64,6 @@ func run() error {
 	// Composition root: construct adapters only when enabled, hold them as ports.
 	var (
 		db      contract.ORM
-		cache   contract.Cache
 		store   contract.Storage
 		token   contract.Token
 		limiter ratelimit.Store
@@ -80,13 +79,16 @@ func run() error {
 	}
 
 	if cfg.RedisEnabled {
-		redisCache, err := redis.New(ctx, cfg.Redis)
+		opts, err := redisOptions(cfg.Redis, os.Getenv("REDIS_USERNAME"))
 		if err != nil {
+			return err
+		}
+		client := goredis.NewClient(opts)
+		defer client.Close()
+		if err := client.Ping(ctx).Err(); err != nil {
 			return fmt.Errorf("redis connect failed: %w", err)
 		}
-		cache = redisCache
-		defer cache.Close()
-		limiter = ratelimit.NewRedisStore(redisCache.Client())
+		limiter = ratelimit.NewRedisStore(client)
 	}
 
 	if cfg.MinIOEnabled {
@@ -101,8 +103,6 @@ func run() error {
 	}
 
 	app := newApp(cfg, trustedProxies, allowedOrigins, db, limiter, token, store)
-
-	_ = cache
 
 	slog.Info("server starting",
 		"port", cfg.App.Port,
@@ -317,6 +317,20 @@ func skipRateLimits(env string) bool {
 }
 
 func allowRequest(c *fiber.Ctx) error { return c.Next() }
+
+// redisOptions builds the client settings directly because the bkgo Redis adapter has no username.
+func redisOptions(cfg config.Redis, username string) (*goredis.Options, error) {
+	// go-redis ignores a username without a password and connects as the default user.
+	if username != "" && cfg.Password == "" {
+		return nil, errors.New("REDIS_USERNAME requires REDIS_PASSWORD")
+	}
+	return &goredis.Options{
+		Addr:     net.JoinHostPort(cfg.Host, cfg.Port),
+		Username: username,
+		Password: cfg.Password,
+		DB:       cfg.DB,
+	}, nil
+}
 
 func validateConfig(cfg *config.Config, trustedProxies []string) error {
 	if cfg.App.Env == "production" && (!cfg.PostgresEnabled || !cfg.JWTEnabled || len([]byte(cfg.JWT.Secret)) < 32 || !cfg.RedisEnabled || len(trustedProxies) == 0 || !cfg.MinIOEnabled) {
