@@ -182,3 +182,28 @@ func TestParseAllowedOrigins(t *testing.T) {
 		}
 	}
 }
+
+func TestRedisOptionsAuth(t *testing.T) {
+	cases := []struct{ name, username, password string }{
+		{"no auth", "", ""},
+		{"password only", "", "secret"},
+		{"username and password", "app", "secret"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			opts, err := redisOptions(config.Redis{Host: "cache", Port: "6379", Password: c.password}, c.username)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if opts.Addr != "cache:6379" || opts.Username != c.username || opts.Password != c.password {
+				t.Fatalf("unexpected options: addr=%q username=%q", opts.Addr, opts.Username)
+			}
+		})
+	}
+}
+
+func TestRedisOptionsRejectsUsernameWithoutPassword(t *testing.T) {
+	if _, err := redisOptions(config.Redis{Host: "cache", Port: "6379"}, "app"); err == nil {
+		t.Fatal("username without password was accepted")
+	}
+}
